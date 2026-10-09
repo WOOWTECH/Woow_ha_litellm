@@ -81,20 +81,20 @@ jobs:
             --out "$RUNNER_TEMP/upstream"
           python3 -I tools/checks/upstream_facts.py "$RUNNER_TEMP/upstream" --lock "$LOCK" \
             --out "$RUNNER_TEMP/reports" --private "$RUNNER_TEMP/private"
-      - name: build (OCI tar on the runner only; nothing pushed, no cache)
+      - name: build (image tar on the runner only; nothing pushed, no cache)
         run: |
           version="$(sed -n 's/^version: *//p' litellm/config.yaml)"
           export SOURCE_DATE_EPOCH="$(jq -r .source_date_epoch "$LOCK")"
           start=$(date +%s)
           docker buildx build --platform linux/amd64 --pull --no-cache --provenance=false --sbom=false \
             --build-arg BUILD_VERSION="$version" --build-arg BUILD_REF="${GITHUB_SHA}" --build-arg BUILD_ARCH=amd64 \
-            --output "type=oci,dest=$RUNNER_TEMP/final.oci.tar,name=woow-litellm:ci,rewrite-timestamp=true,compression=gzip,compatibility-version=30,oci-mediatypes=true" \
+            --output "type=docker,dest=$RUNNER_TEMP/final.image.tar,name=woow-litellm:ci,rewrite-timestamp=true,compression=gzip,compatibility-version=30" \
             litellm
           echo "build took $(( $(date +%s) - start ))s"
-          ls -l "$RUNNER_TEMP/final.oci.tar"
+          ls -l "$RUNNER_TEMP/final.image.tar"
       - name: "assembly checks (DESIGN §5.1 #1, #9, #10; SP1 scripts): enterprise content, Env, per-layer scan"
         run: |
-          python3 -I tools/checks/image_report.py "$RUNNER_TEMP/final.oci.tar" --out "$RUNNER_TEMP/reports" \
+          python3 -I tools/checks/image_report.py "$RUNNER_TEMP/final.image.tar" --out "$RUNNER_TEMP/reports" \
             --name final --epoch "$(jq -r .source_date_epoch "$LOCK")"
           python3 -I - "$RUNNER_TEMP/reports/final.json" "$LOCK" <<'PY'
           import json, sys
@@ -105,20 +105,20 @@ jobs:
           got = rep["layers"][0]
           print("flattened upstream layer", "UNCHANGED" if got["digest"] == want["digest"] else "CHANGED", got["digest"])
           PY
-          python3 -I tools/checks/enterprise_content.py "$RUNNER_TEMP/final.oci.tar" \
+          python3 -I tools/checks/enterprise_content.py "$RUNNER_TEMP/final.image.tar" \
             --hashes "$RUNNER_TEMP/private/enterprise-hashes.txt" --summary "$RUNNER_TEMP/reports/check-1.json"
-          python3 -I tools/checks/env_compare.py "$RUNNER_TEMP/final.oci.tar" --lock "$LOCK" \
+          python3 -I tools/checks/env_compare.py "$RUNNER_TEMP/final.image.tar" --lock "$LOCK" \
             --upstream-config-facts "$RUNNER_TEMP/reports/upstream-facts.json" --summary "$RUNNER_TEMP/reports/check-9.json"
           # base (flattened upstream) + apk + s6-overlay + WORKDIR (empty) + rootfs
-          python3 -I tools/checks/layer_scan.py "$RUNNER_TEMP/final.oci.tar" --lock "$LOCK" \
+          python3 -I tools/checks/layer_scan.py "$RUNNER_TEMP/final.image.tar" --lock "$LOCK" \
             --hashes "$RUNNER_TEMP/private/enterprise-hashes.txt" --expect-layers 5 --summary "$RUNNER_TEMP/reports/check-10.json"
-      - name: load the checked image into the runner's Docker
+      - name: load the checked image (the same tar) into the runner's Docker
         run: |
-          out="$(docker load -i "$RUNNER_TEMP/final.oci.tar")"
-          echo "$out"
-          ref="$(echo "$out" | sed -n 's/^Loaded image: //p; s/^Loaded image ID: //p' | tail -n1)"
-          [ "$ref" = woow-litellm:ci ] || docker tag "$ref" woow-litellm:ci
-          docker image inspect -f 'size={{.Size}} layers={{len .RootFS.Layers}}' woow-litellm:ci
+          # BuildKit's docker exporter writes an OCI layout (index.json, read by tools/checks) plus the
+          # manifest.json that `docker load` needs; the classic image store cannot load an
+          # oci-mediatypes OCI tar ("blobs/json: no such file").
+          docker load -i "$RUNNER_TEMP/final.image.tar"
+          docker image inspect -f 'id={{.Id}} size={{.Size}} layers={{len .RootFS.Layers}}' woow-litellm:ci
       - name: "check 2: unguarded enterprise imports (AST, in the image's Python 3.13)"
         run: |
           docker run --rm --network none --user 65534 -v "$GITHUB_WORKSPACE:/repo:ro" \

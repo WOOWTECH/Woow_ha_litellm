@@ -225,6 +225,61 @@ endgroup
 T1="$(date +%s)"
 docker stop -t 120 woow-b >/dev/null
 STOP_B=$(( $(date +%s) - T1 ))
+docker rm woow-b >/dev/null
+
+# ── extras from §12.2: restore (7), salt guard (9), option validation (10) ────
+expect_refusal() { # name, log pattern: the container must stop by itself, non-zero, with the reason
+  local name="$1" pattern="$2" code
+  code="$(timeout 120 docker wait "$name" || echo timeout)"
+  docker logs "$name" > "$WORK/$name.log" 2>&1 || true
+  if [ "$code" != timeout ] && [ "$code" != 0 ] && grep -q -- "$pattern" "$WORK/$name.log"; then
+    result "x/$name: refused to start (exit $code)" PASS
+  else
+    result "x/$name: refused to start" FAIL "exit $code; reason '$pattern' $(grep -c -- "$pattern" "$WORK/$name.log") time(s) in the log"
+    tail -n 40 "$WORK/$name.log"
+  fi
+  docker rm -f "$name" >/dev/null 2>&1 || true
+}
+in_data() { docker run --rm -v "$DATA:/data" --entrypoint sh "$IMAGE" -c "$1"; }
+
+group "extra: HA restore leaves root-owned 0644 files (§12.2 item 7)"
+in_data 'chown -R 0:0 /data && find /data -type d -exec chmod 755 {} + && find /data -type f -exec chmod 644 {} +'
+start_addon woow-restore
+if RESTORE_BOOT="$(wait_healthy woow-restore 600)"; then
+  result "x/restore: owners and modes fixed, healthy" PASS "${RESTORE_BOOT}s"
+  req "x/restore: secrets back to 0600 root" sh -c "[ \"\$(docker exec $CUR stat -c '%a %u' /data/secrets/master_key)\" = '600 0' ]"
+  req "x/restore: PGDATA back to postgres 0700" sh -c "[ \"\$(docker exec $CUR stat -c '%a %u' /data/postgres)\" = '700 70' ]"
+else
+  result "x/restore: owners and modes fixed, healthy" FAIL
+  docker logs woow-restore 2>&1 | tail -n 60
+fi
+docker stop -t 120 woow-restore >/dev/null 2>&1 || true
+docker rm woow-restore >/dev/null 2>&1 || true
+endgroup
+
+group "extra: salt key guard (§12.2 item 9)"
+in_data 'cp -p /data/secrets/salt_key /data/salt.keep && printf "sk-%064d" 7 > /data/secrets/salt_key'
+start_addon woow-salt
+expect_refusal woow-salt "different salt key"
+in_data 'mv /data/salt.keep /data/secrets/salt_key'
+in_data 'cp -p /data/secrets/salt_key /data/salt.keep && rm -f /data/secrets/salt_key'
+start_addon woow-nosalt
+expect_refusal woow-nosalt "salt_key is missing"
+in_data 'mv /data/salt.keep /data/secrets/salt_key'
+endgroup
+
+group "extra: option validation (§12.2 item 10)"
+cp "$DATA/options.json" "$WORK/options.keep"
+python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); o["master_key"]="sk-1234"; json.dump(o, open(sys.argv[1], "w"))' "$DATA/options.json"
+start_addon woow-weak
+expect_refusal woow-weak "master_key"
+for key in FORWARDED_ALLOW_IPS LITELLM_DANGEROUSLY_PERMIT_WEAK_OR_UNSET_MASTER_KEY CHATGPT_AUTH_FILE; do
+  python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); o["env_vars"]=[{"key": sys.argv[2], "value": "x"}]; json.dump(o, open(sys.argv[3], "w"))' "$WORK/options.keep" "$key" "$DATA/options.json"
+  start_addon "woow-env-$(echo "$key" | tr 'A-Z_' 'a-z-' | cut -c1-20)"
+  expect_refusal "$CUR" "cannot be overridden"
+done
+cp "$WORK/options.keep" "$DATA/options.json"
+endgroup
 
 FAILED="$(grep -c '"status": "FAIL"' "$RESULTS" || true)"
 WARNED="$(grep -c '"status": "WARN"' "$RESULTS" || true)"
