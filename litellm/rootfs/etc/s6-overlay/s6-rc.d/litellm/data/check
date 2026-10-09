@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/bin/curl -fs -o /dev/null --max-time 3 http://127.0.0.1:4000/health/liveliness 2>/dev/null

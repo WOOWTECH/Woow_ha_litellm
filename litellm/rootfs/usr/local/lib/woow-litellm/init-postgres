@@ -1,0 +1,34 @@
+#!/bin/sh
+# init-postgres (DESIGN §7.1, §7.3 step 5, §7.5): create the cluster on first start; refuse a
+# cluster of another major version; (re)write pg_hba.conf and the settings include every start.
+set -eu
+export WOOW_STEP=init-postgres
+. /usr/local/lib/woow-litellm/common.sh
+PGDATA=/data/postgres
+WANT=18
+cd /
+
+have="$(/usr/bin/postgres --version | sed -n 's/.*[^0-9]\([0-9][0-9]*\)\.[0-9].*/\1/p')"
+[ "$have" = "$WANT" ] || fatal "this image ships PostgreSQL ${have:-?}, expected $WANT"
+
+if [ ! -s "$PGDATA/PG_VERSION" ]; then
+  if [ -n "$(ls -A "$PGDATA")" ]; then
+    fatal "$PGDATA is not empty but has no PG_VERSION; restore /data from a backup (nothing was changed)"
+  fi
+  log "creating the PostgreSQL $WANT cluster (first start)"
+  as_postgres /usr/bin/initdb -D "$PGDATA" -U postgres --encoding=UTF8 --locale=C \
+    --locale-provider=builtin --builtin-locale=C.UTF-8 \
+    --auth-local=peer --auth-host=scram-sha-256 >/dev/null
+fi
+
+cluster="$(cat "$PGDATA/PG_VERSION")"
+if [ "$cluster" != "$WANT" ]; then
+  fatal "the database was created by PostgreSQL $cluster but this add-on runs PostgreSQL $WANT. Nothing was changed: restore the backup taken before the update (DESIGN §7.5)"
+fi
+
+install -m 0600 -o postgres -g postgres /usr/share/woow-litellm/pg_hba.conf "$PGDATA/pg_hba.conf"
+line="include_if_exists = '/usr/share/woow-litellm/postgresql.woow.conf'"
+if ! grep -qxF "$line" "$PGDATA/postgresql.conf"; then
+  printf '\n# Woow LiteLLM add-on settings (listen address, memory, WAL); keep this line last.\n%s\n' "$line" >> "$PGDATA/postgresql.conf"
+fi
+log "PostgreSQL $WANT cluster ready ($PGDATA)"

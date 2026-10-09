@@ -1,0 +1,8 @@
+#!/bin/sh
+# postgres longrun (DESIGN §7.1): PostgreSQL 18 as the postgres user, listening on 127.0.0.1 and
+# its unix socket only. No environment from the container (S6_KEEP_ENV=0, no with-contenv).
+# Ready = pg_isready over TCP (./data/check, polled by s6-notifyoncheck). Stop = SIGINT (fast).
+exec 2>&1
+install -d -m 0700 -o postgres -g postgres /run/postgresql
+exec /command/s6-notifyoncheck -d -n 0 -w 1000 \
+  /command/s6-setuidgid postgres /usr/bin/postgres -D /data/postgres

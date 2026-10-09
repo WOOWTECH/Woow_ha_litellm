@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Woow LiteLLM</title>
+<link rel="stylesheet" href="style.css">
+<script src="status.js" defer></script>
+</head>
+<body>
+<main>
+<h1>Woow LiteLLM</h1>
+<p class="status">狀態：<strong id="status" data-state="unknown">檢查中…</strong></p>
+
+<section class="notice">
+<h2>這次開機無法在側邊欄顯示 LiteLLM 管理介面</h2>
+<p>@REASON@</p>
+<p><strong>重新啟動這個 add-on</strong>（設定 → 附加元件 → Woow LiteLLM → 重新啟動）即可恢復側邊欄的管理介面。</p>
+<p>也可以在 add-on 的「網路」設定開放 4000 埠，再用 <code>http://&lt;HA 主機&gt;:4000/</code> 開啟（HTTP 明文，只在可信任的區網使用），或接 Cloudflare Tunnel。</p>
+</section>
+
+<section>
+<h2>版本</h2>
+<dl>
+<dt>Add-on</dt><dd>@ADDON_VERSION@</dd>
+<dt>LiteLLM</dt><dd>@LITELLM_VERSION@ <span class="digest">@LITELLM_DIGEST@</span></dd>
+<dt>PostgreSQL</dt><dd>@PG_VERSION@</dd>
+</dl>
+</section>
+
+<section>
+<h2>給同一台 HA 的其他 add-on</h2>
+<p>內部 API 位址：<code>http://@HOSTNAME@:4000</code>（OpenAI 相容端點在 <code>/v1</code>）。</p>
+<p>請為每個用途在 LiteLLM 建立各自的虛擬 key，不要把 master key 交給其他 add-on。</p>
+</section>
+
+<section>
+<h2>金鑰在哪裡</h2>
+<p>@KEYS_NOTE@</p>
+<p>本頁不顯示任何金鑰或密碼。</p>
+</section>
+
+<section>
+<h2>提醒</h2>
+<ul>
+<li>HA 備份內含 master key、salt key、資料庫與 ChatGPT 訂閱的登入：請使用 HA 的加密備份。</li>
+<li>解除安裝會刪除所有資料（金鑰與資料庫），無法復原。</li>
+<li>每天的自動備份會讓服務停止約 1–2 分鐘（冷備份）。</li>
+</ul>
+</section>
+<p class="footer">本 add-on 由 WOOWTECH 打包，不是 BerriAI 的官方產品；LiteLLM 是 BerriAI 的專案名稱。</p>
+</main>
+</body>
+</html>

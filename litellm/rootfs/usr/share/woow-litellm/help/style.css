@@ -1,0 +1,13 @@
+body { font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif; margin: 0; color: #1f2933; background: #fafbfc; }
+main { max-width: 46rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+h1 { font-size: 1.6rem; margin: 0 0 .5rem; }
+h2 { font-size: 1.1rem; margin: 1.6rem 0 .4rem; }
+code { background: #eef1f4; padding: .1rem .3rem; border-radius: 3px; }
+.notice { background: #fff8e6; border-left: 4px solid #f0b429; padding: .2rem 1rem .6rem; margin-top: 1rem; }
+.status strong[data-state="ready"] { color: #1a7f37; }
+.status strong[data-state="starting"] { color: #9a6700; }
+.status strong[data-state="db"], .status strong[data-state="unknown"] { color: #cf222e; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: .2rem 1rem; }
+dt { font-weight: 600; }
+.digest { color: #6b7785; font-size: .8rem; word-break: break-all; }
+.footer { color: #6b7785; font-size: .85rem; margin-top: 2rem; }

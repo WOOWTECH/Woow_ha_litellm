@@ -1,0 +1,52 @@
+configuration:
+  master_key:
+    name: Master key
+    description: >-
+      留空會沿用已存的值（第一次啟動自動產生，並在 Home Assistant 2026.5.0 以上、Supervisor 2026.07.0
+      以上時寫回這裡一次）；寫回後清空此欄不會換 key，也不會再被寫回。要換請填新的 sk-… 值並重新啟動，
+      所有後台登入會被登出。同一台 HA 的其他 add-on 請改用 LiteLLM 的虛擬 key，不要給 master key。
+  ui_username:
+    name: 後台帳號
+    description: LiteLLM 管理介面的登入帳號。
+  ui_password:
+    name: 後台密碼
+    description: >-
+      留空會沿用已存的密碼（第一次啟動自動產生，並比照 master key 寫回這裡一次）。至少 12 個字元。
+      更改並重新啟動後，所有後台登入會被登出。
+  ui_session_duration:
+    name: 後台登入有效時間
+    description: 後台登入一次可以用多久，1h 到 24h（預設 4h）。
+  log_level:
+    name: 記錄等級
+    description: >-
+      error 或 warning。請求網址一律不寫進記錄。需要除錯時可在環境變數設 LITELLM_LOG，請自行承擔風險。
+  spend_logs_retention:
+    name: 用量紀錄保留期間
+    description: 請求用量（spend log）保留多久，例如 30d 或 12h（預設 30d）。
+  spend_logs_cleanup_cron:
+    name: 用量紀錄清理時間
+    description: >-
+      清理用量紀錄的排程（cron，依 HA 的時區，預設每天 03:30）。請避開 HA 自動備份的時段；星期請用
+      mon、sun 等縮寫（不要用數字）。
+  password_breach_check:
+    name: 檢查密碼是否外洩
+    description: >-
+      LiteLLM 以 Have I Been Pwned 檢查後台資料庫使用者的密碼（k-anonymity，只送出雜湊的前幾碼）。
+      上面的後台帳號密碼不在檢查範圍。
+  chatgpt_subscription:
+    name: ChatGPT 訂閱
+    description: >-
+      讓 LiteLLM 用 ChatGPT Plus／Pro 訂閱的額度（與 Woow PaaS 相同的功能）。關掉後不會刪除已連線的帳號；
+      要刪請先在 ChatGPT 訂閱頁中斷連線。同一個 ChatGPT 帳號可以在 PaaS 與這裡各自登入，但不要把備份還原到
+      第二台主機繼續用。
+  api_docs:
+    name: API 文件頁
+    description: >-
+      開啟 /docs 等 API 文件頁。預設關閉；同一台 HA 的其他 add-on 都連得到 4000，開了就多一個可被探查的頁面。
+  env_vars:
+    name: 環境變數
+    description: >-
+      額外給 LiteLLM 的環境變數。add-on 自己設定的變數（金鑰、資料庫、路徑、ChatGPT 外掛、S6_、PRISMA_ 等）
+      會被拒絕。
+network:
+  4000/tcp: LiteLLM API 與管理介面（區網為 HTTP 明文；要 HTTPS 請用 Cloudflare Tunnel）。預設不開。

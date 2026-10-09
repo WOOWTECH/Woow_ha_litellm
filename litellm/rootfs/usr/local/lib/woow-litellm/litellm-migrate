@@ -1,0 +1,18 @@
+#!/bin/sh
+# litellm-migrate (DESIGN §7.1, §7.5): upstream's prisma_migration.py as uid 65534 with the
+# litellm-migrate env (no PYTHONPATH, SERVER_ROOT_PATH, ROOT_REDIRECT_URL or WOOW_*: this process
+# imports proxy_server too, which would load the plugin and rewrite the UI files).
+set -eu
+export WOOW_STEP=litellm-migrate
+. /usr/local/lib/woow-litellm/common.sh
+
+log "applying the LiteLLM database migrations (the first start takes a few minutes)"
+cd /app
+rc=0
+/command/emptyenv /command/s6-envdir /run/woow/env/litellm-migrate \
+  /command/s6-setuidgid nobody /app/.venv/bin/python /app/litellm/proxy/prisma_migration.py || rc=$?
+if [ "$rc" -ne 0 ]; then
+  fatal "the migration failed (exit $rc); LiteLLM is not started on an out-of-date schema. The pre-upgrade dump (if any) is in /data/pre-upgrade-dumps"
+fi
+woow_init state-migrated
+log "migrations applied"

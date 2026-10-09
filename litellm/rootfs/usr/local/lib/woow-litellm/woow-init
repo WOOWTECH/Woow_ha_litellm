@@ -1,0 +1,4 @@
+#!/bin/sh
+# Boot steps in Python (woow_init.py), run with the image's own interpreter, isolated (-I: no
+# PYTHONPATH, no user site, no script directory on sys.path).
+exec /app/.venv/bin/python3 -I /usr/local/lib/woow-litellm/woow_init.py "$@"

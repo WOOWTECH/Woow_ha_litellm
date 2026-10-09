@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/bin/pg_isready -q -h 127.0.0.1 -p 5432 -t 2

@@ -1,0 +1,22 @@
+#!/bin/sh
+# litellm longrun (DESIGN §7.1, §7.2, §8.6): LiteLLM as uid 65534 in /app, environment only from
+# /run/woow/env/litellm (re-read at every restart, so `s6-svc -r` picks up a changed file).
+# With the ChatGPT subscription on, the sign-ins kept in the database are first put back on
+# tmpfs (a restart inside the same container keeps the newer tmpfs copy and saves it instead);
+# a failed restore is logged and LiteLLM starts anyway (same as the PaaS start-litellm.sh).
+# Ready = /health/liveliness answers on 4000 (./data/check, polled by s6-notifyoncheck, which runs
+# it with this script's minimal environment, before the env dir is loaded).
+exec 2>&1
+ENVDIR=/run/woow/env/litellm
+if [ "$(cat "$ENVDIR/WOOW_CHATGPT_ENABLED" 2>/dev/null)" = "true" ]; then
+  if ! ( cd /app && /command/emptyenv /command/s6-envdir "$ENVDIR" \
+         /command/s6-setuidgid nobody /app/.venv/bin/python /usr/share/woow-litellm/py/woow_chatgpt.py restore ); then
+    echo "[woow-litellm] litellm: ChatGPT sign-ins not restored (see above); LiteLLM starts anyway"
+  fi
+fi
+exec /command/s6-notifyoncheck -d -n 0 -w 2000 \
+  /command/emptyenv /command/s6-envdir "$ENVDIR" /command/cd /app \
+  /command/s6-setuidgid nobody /app/.venv/bin/litellm \
+    --host 0.0.0.0 --port 4000 \
+    --config /run/litellm/config.yaml \
+    --log_config /usr/share/woow-litellm/uvicorn-log.json

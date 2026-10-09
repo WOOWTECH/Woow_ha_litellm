@@ -1,0 +1,32 @@
+#!/bin/sh
+# init-db (DESIGN §7.1, §7.4): role and database litellm; the role password as a SCRAM verifier
+# (never the password itself); salt fingerprint in woow.meta; woow_platform tables (same as the
+# PaaS chart) with the salt copy. A salt that disagrees with /data/secrets refuses the start.
+set -eu
+# shellcheck disable=SC3040  # busybox ash has pipefail
+set -o pipefail
+export WOOW_STEP=init-db
+. /usr/local/lib/woow-litellm/common.sh
+cd /
+
+psql_su -d postgres <<'SQL'
+SET client_min_messages = warning;
+SELECT 'CREATE ROLE litellm LOGIN' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'litellm') \gexec
+SELECT 'CREATE DATABASE litellm OWNER litellm ENCODING ''UTF8'' TEMPLATE template0' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'litellm') \gexec
+SQL
+
+woow_init scram-sql | psql_su -d postgres >/dev/null
+
+r="$(woow_init meta-sql | psql_su -d litellm)"
+if [ "$r" != "same" ]; then
+  fatal "the database belongs to a different salt key than /data/secrets/salt_key. Stored provider keys could not be decrypted, so the add-on does not start. Restore the backup that contains both /data/postgres and /data/secrets; never generate a new salt key"
+fi
+
+r="$(woow_init platform-sql | psql_su -d litellm)"
+case "$r" in
+  same) ;;
+  empty) fatal "woow_platform.settings holds an empty salt key copy; refusing to start" ;;
+  different) fatal "woow_platform.settings holds a different salt key than /data/secrets/salt_key; refusing to start (restore a consistent backup)" ;;
+  *) fatal "could not check the salt key copy in woow_platform.settings" ;;
+esac
+log "database ready: role and database litellm, salt key fingerprint and woow_platform tables checked"

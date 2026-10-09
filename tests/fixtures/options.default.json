@@ -1,0 +1,11 @@
+{
+  "ui_username": "admin",
+  "ui_session_duration": "4h",
+  "log_level": "warning",
+  "spend_logs_retention": "30d",
+  "spend_logs_cleanup_cron": "30 3 * * *",
+  "password_breach_check": true,
+  "chatgpt_subscription": true,
+  "api_docs": false,
+  "env_vars": []
+}

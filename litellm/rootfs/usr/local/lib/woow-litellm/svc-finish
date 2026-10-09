@@ -1,0 +1,30 @@
+#!/bin/sh
+# finish script of the postgres and litellm longruns (DESIGN §7.1, §7.6):
+#   svc-finish <service> <exit code> <signal>      (cwd = the service directory)
+# s6 restarts a crashed service by itself; 5 crashes within 5 minutes stop the whole container
+# with a non-zero exit code, so the Supervisor marks the add-on as failed instead of leaving a
+# half-up add-on (nginx up, "starting…" forever). A deliberate stop (s6-rc down, container stop)
+# is not counted.
+name="${1:?service name}"
+code="${2:-0}"
+sig="${3:-0}"
+if [ "$(/command/s6-svstat -o wantedup . 2>/dev/null)" != "true" ]; then
+  exit 0
+fi
+dir=/run/woow/failures
+mkdir -p "$dir"
+now="$(date +%s)"
+f="$dir/$name"
+{ [ -f "$f" ] && cat "$f"; echo "$now"; } | awk -v now="$now" '(now - $1) < 300' > "$f.new"
+mv "$f.new" "$f"
+n="$(wc -l < "$f" | tr -d ' ')"
+if [ "$code" = 256 ]; then what="killed by signal $sig"; else what="exited with code $code"; fi
+echo "[woow-litellm] $name: $what ($n failure(s) within 5 minutes)" >&2
+if [ "$n" -ge 5 ]; then
+  echo "[woow-litellm] $name: FATAL failed 5 times within 5 minutes; stopping the add-on (see the messages above)" >&2
+  rc=1
+  if [ "$code" -gt 0 ] 2>/dev/null && [ "$code" -lt 256 ]; then rc="$code"; fi
+  echo "$rc" > /run/s6-linux-init-container-results/exitcode
+  exec /run/s6/basedir/bin/halt
+fi
+exit 0

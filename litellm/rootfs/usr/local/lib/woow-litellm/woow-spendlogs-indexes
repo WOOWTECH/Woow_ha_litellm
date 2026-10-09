@@ -1,0 +1,33 @@
+#!/bin/sh
+# woow-spendlogs-indexes (DESIGN §7.1): the two LiteLLM_SpendLogs indexes upstream's migrations
+# leave to the operator (litellm_proxy_extras HAND_BUILT_SPEND_LOGS_INDEXES), built online after
+# LiteLLM is up; an INVALID one (interrupted CONCURRENTLY build) is dropped and rebuilt.
+# Always exits 0: a failed oneshot would stop the container (S6_BEHAVIOUR_IF_STAGE2_FAILS=2).
+export WOOW_STEP=woow-spendlogs-indexes
+. /usr/local/lib/woow-litellm/common.sh
+cd /
+
+build() {
+  idx="$1"
+  cols="$2"
+  valid="$(psql_su -d litellm -c "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = '$idx'")" || return 1
+  if [ "$valid" = "t" ]; then
+    return 0
+  fi
+  if [ "$valid" = "f" ]; then
+    log "index $idx is INVALID (interrupted build): rebuilding"
+    psql_su -d litellm -c "DROP INDEX CONCURRENTLY IF EXISTS \"$idx\"" || return 1
+  fi
+  psql_su -d litellm -c "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"$idx\" ON \"LiteLLM_SpendLogs\" $cols" || return 1
+  log "index $idx built"
+}
+
+if [ "$(psql_su -d litellm -c "SELECT to_regclass('public.\"LiteLLM_SpendLogs\"') IS NOT NULL" 2>/dev/null)" != "t" ]; then
+  log "WARNING table LiteLLM_SpendLogs not found; retrying at the next start"
+  exit 0
+fi
+build LiteLLM_SpendLogs_api_key_startTime_idx '("api_key", "startTime")' \
+  || log "WARNING could not build LiteLLM_SpendLogs_api_key_startTime_idx; retrying at the next start"
+build LiteLLM_SpendLogs_litellm_call_id_idx '("litellm_call_id")' \
+  || log "WARNING could not build LiteLLM_SpendLogs_litellm_call_id_idx; retrying at the next start"
+exit 0

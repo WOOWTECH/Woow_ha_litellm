@@ -1,0 +1,7 @@
+#!/bin/sh
+# nginx longrun (DESIGN §8.2, §8.3): master as root, workers as woow-nginx (uid 101, never the
+# LiteLLM uid). The site (LiteLLM UI via Ingress, or the help page) was written by
+# init-woow-supervisor into /run/woow/nginx/site.conf.
+exec 2>&1
+install -d -m 0750 -o root -g woow-nginx /run/nginx
+exec /usr/bin/nginx -e stderr -c /etc/nginx/nginx.conf -g 'daemon off;'
