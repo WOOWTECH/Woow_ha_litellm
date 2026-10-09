@@ -2,5 +2,5 @@
   "addon_version": "0.1.0",
   "litellm_version": "1.104.0",
   "litellm_digest": "sha256:843a35c72a832e9c062b66111b1aa54e6588fb32c3ab400d3e20ea9c5fa656a0",
-  "woow_plugin_source": "woow-paas-charts 0.3.0@22e88ab"
+  "woow_plugin_source": "woow-paas-charts 0.3.0@dcd929e"
 }

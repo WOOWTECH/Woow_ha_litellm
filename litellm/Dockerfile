@@ -113,7 +113,7 @@ LABEL org.opencontainers.image.title="Woow LiteLLM" \
       io.hass.version=${BUILD_VERSION} \
       io.woowtech.litellm.version=1.104.0 \
       io.woowtech.litellm.digest=sha256:843a35c72a832e9c062b66111b1aa54e6588fb32c3ab400d3e20ea9c5fa656a0 \
-      io.woowtech.woow-plugin.source=0.3.0@22e88ab76dc6d783ee604c4351758fe0af5207b7
+      io.woowtech.woow-plugin.source=0.3.0@dcd929edddbae4e4b284c9447568c6e10aff2c34
 
 # start-period 45 min ≥ Supervisor retry 1 + pre-upgrade dump 10 + migration 25 + LiteLLM 5 (§7.6).
 HEALTHCHECK --start-period=45m --start-interval=10s --interval=60s --timeout=10s --retries=3 \

@@ -5,10 +5,11 @@
     "repository": "woow-paas/woow-paas-charts",
     "url": "https://git-prod.woowtech.io/woow-paas/woow-paas-charts",
     "path": "charts/litellm/files/",
-    "commit": "22e88ab76dc6d783ee604c4351758fe0af5207b7",
-    "branch": "feat/litellm-1.104.0",
+    "commit": "dcd929edddbae4e4b284c9447568c6e10aff2c34",
+    "branch": "main",
     "chart_version": "0.3.0",
-    "merged_to_main": false
+    "merged_to_main": true,
+    "pr": "woow-paas/woow-paas-charts#175 (0.3.0, on top of #174 0.2.6)"
   },
   "destination": "litellm/rootfs/usr/share/woow-litellm/py/",
   "synced_at": "2026-10-09T15:03:06Z",
