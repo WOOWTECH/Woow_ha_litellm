@@ -1,6 +1,9 @@
 # Woow LiteLLM
 
 > **測試版**：尚未正式發佈。
+>
+> **非公開散布**：只供 WOOWTECH 自有的 Home Assistant 主機使用；映像是 GHCR 的私人 package，安裝前要在
+> Supervisor 設定 `ghcr.io` 的唯讀憑證（見說明文件）。
 
 本 add-on 由 WOOWTECH 打包，不是 BerriAI 的官方產品；LiteLLM 是 BerriAI 的專案名稱。
 

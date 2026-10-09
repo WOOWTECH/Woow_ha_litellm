@@ -147,7 +147,30 @@ def local():
             pass
         check("a/chat completion answers from the mock model", content == "hello from the woow smoke mock",
               f"{r.status} {r.text[:200]}", required=False)
+    responses_background()
     save_state(state)
+
+
+def responses_background():
+    """Owner decision 2026-10-09: enterprise code is kept, so the Responses API background mode works
+    (the M0 pruned image answered 500 "No module named 'litellm_enterprise'")."""
+    mock = os.environ.get("MOCK_UPSTREAM")
+    if not mock:
+        return
+    model = {"model_name": "woow-smoke-upstream",
+             "litellm_params": {"model": "openai/mock-bg", "api_base": f"{mock}/v1", "api_key": "sk-mock-placeholder"}}
+    r = req("POST", f"{API}/model/new", model, headers=bearer(MASTER))
+    if not check("a/model/new (mock OpenAI-compatible upstream)", r.status == 200, r.text):
+        return
+    time.sleep(2)
+    r = req("POST", f"{API}/v1/responses", {"model": "woow-smoke-upstream", "input": "ping"}, headers=bearer(MASTER))
+    check("a/Responses API (foreground) → 200", r.status == 200, f"{r.status} {r.text[:200]}")
+    r = req("POST", f"{API}/v1/responses", {"model": "woow-smoke-upstream", "input": "ping", "background": True},
+            headers=bearer(MASTER))
+    body = r.json() if r.status == 200 else {}
+    check("a/Responses API background: true → 200 queued (enterprise code present, no ImportError)",
+          r.status == 200 and body.get("status") == "queued" and "litellm_enterprise" not in r.text,
+          f"{r.status} {r.text[:300]}")
 
 
 # ── boot B: Supervisor + Ingress emulators ────────────────────────────────────

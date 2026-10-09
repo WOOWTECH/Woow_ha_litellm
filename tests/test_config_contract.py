@@ -108,16 +108,13 @@ def test_translations_cover_schema_and_ports(lang):
 # ── Dockerfile (§5.1, §5.2, §5.4, §7.6) ──────────────────────────────────────
 def test_dockerfile_stages():
     froms = [ln for ln in dockerfile_instructions() if ln.startswith("FROM ")]
-    assert froms == [
-        "FROM ${LITELLM_IMAGE} AS upstream",
-        "FROM upstream AS pruned",
-        "FROM scratch AS s6-overlay",
-        "FROM scratch AS base",
-        "FROM base AS runtime",
-    ]
-    assert froms[-1] == "FROM base AS runtime", "the final stage must sit on the FROM scratch base"
-    assert "COPY --from=pruned / /" in DOCKERFILE
-    assert re.search(r'ENTRYPOINT \["/init"\]\s*$', DOCKERFILE)
+    # Owner decision 2026-10-09: private image straight on the upstream image (as the PaaS),
+    # enterprise code kept; only the s6-overlay download stage besides it.
+    assert froms == ["FROM scratch AS s6-overlay", "FROM ${LITELLM_IMAGE} AS runtime"]
+    ins = dockerfile_instructions()
+    assert ins.index("USER root") > ins.index("FROM ${LITELLM_IMAGE} AS runtime")
+    assert not [ln for ln in ins if ln.startswith("USER ") and ln != "USER root"]
+    assert re.search(r'ENTRYPOINT \["/init"\]\s*CMD \[\]\s*$', DOCKERFILE), "upstream CMD must be cleared"
 
 
 def test_dockerfile_upstream_digest_matches_lock():
@@ -128,21 +125,17 @@ def test_dockerfile_upstream_digest_matches_lock():
     assert f"io.woowtech.litellm.version={LOCK['litellm_version']}" in DOCKERFILE
 
 
-def test_dockerfile_prunes_enterprise_and_chainguard():
-    for path in ("/app/enterprise", "litellm_enterprise", "/usr/local/bin/pgbouncer", "/etc/apko.json",
-                 "/etc/apk/keys/chainguard-*.rsa.pub", "/var/lib/db/sbom"):
-        assert path in DOCKERFILE
-    assert f"ARG WOLFI_SIGNING_PUB_SHA256={LOCK['wolfi_signing_key_sha256']}" in DOCKERFILE
-    assert f"ARG WOLFI_REPOSITORY={LOCK['wolfi_repository']}" in DOCKERFILE
-
-
-def test_dockerfile_apk_pins_equal_lock():
-    run = next(ln for ln in dockerfile_instructions() if ln.startswith("RUN apk add"))
-    pins = re.findall(r"([A-Za-z0-9_.+-]+=[0-9][A-Za-z0-9_.+-]*-r[0-9]+)", run.split("&&")[0])
+def test_dockerfile_apk_from_public_wolfi_with_lock_pins():
+    run = next(ln for ln in dockerfile_instructions() if ln.startswith("RUN ") and "apk add" in ln)
+    apk = run[run.index("apk add"):].split("&&")[0]
+    pins = re.findall(r"([A-Za-z0-9_.+-]+=[0-9][A-Za-z0-9_.+-]*-r[0-9]+)", apk)
     want = [f"{p['name']}={p['version']}" for p in LOCK["wolfi_apk"]["apk_add"]]
     assert pins == want
     assert len(want) == 38
-    assert "rm -rf /var/lib/db/sbom" in run, "the new packages' SBOMs must not reach a layer"
+    assert '--repositories-file /dev/null --repository "$WOLFI_REPOSITORY"' in apk
+    assert f"ARG WOLFI_REPOSITORY={LOCK['wolfi_repository']}" in DOCKERFILE
+    assert f"ARG WOLFI_SIGNING_PUB_SHA256={LOCK['wolfi_signing_key_sha256']}" in DOCKERFILE
+    assert run.index("sha256sum -c") < run.index("apk add")
 
 
 def test_dockerfile_s6_overlay_checksums_equal_lock():
@@ -152,23 +145,18 @@ def test_dockerfile_s6_overlay_checksums_equal_lock():
         assert any(f"--checksum=sha256:{asset['sha256']}" in ln and asset["url"] in ln for ln in adds), asset["name"]
 
 
-def test_lock_cosign_key_and_fixture():
+def test_lock_cosign_key():
     pub = REPO / LOCK["cosign_pub"]["path"]
     assert hashlib.sha256(pub.read_bytes()).hexdigest() == LOCK["cosign_pub"]["sha256"]
-    rows = [ln for ln in (REPO / "tests/fixtures/enterprise-unguarded.txt").read_text().splitlines()
-            if ln and not ln.startswith("#")]
-    assert len(rows) == 14 and sum(r.endswith("\terror") for r in rows) == 1
-    assert LOCK["source_date_epoch"] == 1791063324
 
 
-def test_dockerfile_env_restates_upstream_env():
+def test_dockerfile_env_and_upstream_env_file():
     joined = re.sub(r"\\\n\s*", " ", DOCKERFILE)
     envs = " ".join(ln for ln in joined.splitlines() if ln.startswith("ENV "))
-    for kv in LOCK["env"]:
-        assert kv in envs.split(), kv
     for kv in ("CHECKPOINT_DISABLE=1", "S6_BEHAVIOUR_IF_STAGE2_FAILS=2", "S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0",
                "S6_KILL_GRACETIME=10000"):
         assert kv in envs.split()
+    # the services get the upstream Env from this file (s6 passes no container environment)
     shipped = [ln for ln in (SHARE / "upstream.env").read_text().splitlines() if ln and not ln.startswith("#")]
     assert shipped == LOCK["env"]
 
@@ -189,8 +177,6 @@ def test_labels():
         assert label in DOCKERFILE
     src = PLUGIN_LOCK["source"]
     assert f"io.woowtech.woow-plugin.source={src['chart_version']}@{src['commit']}" in DOCKERFILE
-    labels = " ".join(ln for ln in dockerfile_instructions() if ln.startswith("LABEL "))
-    assert "chainguard" not in labels.lower()
 
 
 def test_healthcheck_start_period_covers_boot():

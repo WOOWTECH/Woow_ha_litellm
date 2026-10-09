@@ -57,85 +57,33 @@ jobs:
         run: /tmp/venv/bin/pytest -q tests
 
   build-smoke:
-    name: build amd64 + assembly checks + container smoke
+    name: build amd64 + container smoke
     needs: lint-unit
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    env:
-      LOCK: litellm/upstream.lock.json
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0 (Node 24)
         with:
           persist-credentials: false
-      - name: BuildKit v0.33.0 builder (docker-container driver; same as the SP1/SP4 spike)
-        run: |
-          docker buildx create --name woow --driver docker-container \
-            --driver-opt image=moby/buildkit:v0.33.0 --bootstrap --use
-          docker buildx inspect --bootstrap | sed -n '1,12p'
-      - name: pinned upstream (amd64) into an OCI layout on the runner, facts vs lock
-        run: |
-          mkdir -p "$RUNNER_TEMP/reports" "$RUNNER_TEMP/private"
-          python3 -I tools/checks/fetch_upstream.py \
-            --repo "$(jq -r .image "$LOCK")" --index-digest "$(jq -r .index_digest "$LOCK")" \
-            --manifest-digest "$(jq -r '.platforms["linux/amd64"].manifest_digest' "$LOCK")" \
-            --out "$RUNNER_TEMP/upstream"
-          python3 -I tools/checks/upstream_facts.py "$RUNNER_TEMP/upstream" --lock "$LOCK" \
-            --out "$RUNNER_TEMP/reports" --private "$RUNNER_TEMP/private"
-      - name: build (image tar on the runner only; nothing pushed, no cache)
+      - name: build (loaded into the runner's Docker only; nothing pushed, no cache)
         run: |
           version="$(sed -n 's/^version: *//p' litellm/config.yaml)"
-          export SOURCE_DATE_EPOCH="$(jq -r .source_date_epoch "$LOCK")"
           start=$(date +%s)
           docker buildx build --platform linux/amd64 --pull --no-cache --provenance=false --sbom=false \
             --build-arg BUILD_VERSION="$version" --build-arg BUILD_REF="${GITHUB_SHA}" --build-arg BUILD_ARCH=amd64 \
-            --output "type=docker,dest=$RUNNER_TEMP/final.image.tar,name=woow-litellm:ci,rewrite-timestamp=true,compression=gzip,compatibility-version=30" \
-            litellm
+            --load -t woow-litellm:ci litellm
           echo "build took $(( $(date +%s) - start ))s"
-          ls -l "$RUNNER_TEMP/final.image.tar"
-      - name: "assembly checks (DESIGN §5.1 #1, #9, #10; SP1 scripts): enterprise content, Env, per-layer scan"
-        run: |
-          python3 -I tools/checks/image_report.py "$RUNNER_TEMP/final.image.tar" --out "$RUNNER_TEMP/reports" \
-            --name final --epoch "$(jq -r .source_date_epoch "$LOCK")"
-          python3 -I - "$RUNNER_TEMP/reports/final.json" "$LOCK" <<'PY'
-          import json, sys
-          rep, lock = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
-          for l in rep["layers"]:
-              print(f"layer {l['index']}: {l['digest']} {l['size']/2**20:.1f} MiB gz / {l['uncompressed_size']/2**20:.1f} MiB")
-          want = lock["expected_flattened_layer"]
-          got = rep["layers"][0]
-          print("flattened upstream layer", "UNCHANGED" if got["digest"] == want["digest"] else "CHANGED", got["digest"])
-          PY
-          python3 -I tools/checks/enterprise_content.py "$RUNNER_TEMP/final.image.tar" \
-            --hashes "$RUNNER_TEMP/private/enterprise-hashes.txt" --summary "$RUNNER_TEMP/reports/check-1.json"
-          python3 -I tools/checks/env_compare.py "$RUNNER_TEMP/final.image.tar" --lock "$LOCK" \
-            --upstream-config-facts "$RUNNER_TEMP/reports/upstream-facts.json" --summary "$RUNNER_TEMP/reports/check-9.json"
-          # base (flattened upstream) + apk + s6-overlay + WORKDIR (empty) + rootfs
-          python3 -I tools/checks/layer_scan.py "$RUNNER_TEMP/final.image.tar" --lock "$LOCK" \
-            --hashes "$RUNNER_TEMP/private/enterprise-hashes.txt" --expect-layers 5 --summary "$RUNNER_TEMP/reports/check-10.json"
-      - name: load the checked image (the same tar) into the runner's Docker
-        run: |
-          # BuildKit's docker exporter writes an OCI layout (index.json, read by tools/checks) plus the
-          # manifest.json that `docker load` needs; the classic image store cannot load an
-          # oci-mediatypes OCI tar ("blobs/json: no such file").
-          docker load -i "$RUNNER_TEMP/final.image.tar"
           docker image inspect -f 'id={{.Id}} size={{.Size}} layers={{len .RootFS.Layers}}' woow-litellm:ci
-      - name: "check 2: unguarded enterprise imports (AST, in the image's Python 3.13)"
-        run: |
-          docker run --rm --network none --user 65534 -v "$GITHUB_WORKSPACE:/repo:ro" \
-            --entrypoint /app/.venv/bin/python woow-litellm:ci -I /repo/tools/checks/enterprise_imports.py check \
-            --root site-packages=/app/.venv/lib/python3.13/site-packages --root app=/app --exclude /app/.venv \
-            --fixture /repo/tests/fixtures/enterprise-unguarded.txt
+          docker history --format '{{.Size}}\t{{.CreatedBy}}' woow-litellm:ci | head -n 8 | cut -c1-160
       - name: image facts
         run: |
           docker run --rm --entrypoint sh woow-litellm:ci -c '
             set -e
-            cat /etc/apk/repositories; ls /etc/apk/keys
-            test ! -e /app/enterprise && test ! -e /usr/local/bin/pgbouncer && test ! -e /etc/apko.json && test ! -e /var/lib/db/sbom
-            ! ls -d /app/.venv/lib/python3.13/site-packages/litellm_enterprise* 2>/dev/null
             postgres --version; nginx -v; curl --version | head -n1; jq --version
             id postgres; id woow-nginx; id nobody
-            apk info -v 2>/dev/null | sort > /tmp/apk.txt; wc -l < /tmp/apk.txt'
+            test -d /app/enterprise && echo "enterprise code present (private image, owner decision 2026-10-09)"'
           docker image inspect -f '{{json .Config.Labels}}' woow-litellm:ci | python3 -m json.tool
+          docker image inspect -f 'Entrypoint={{json .Config.Entrypoint}} Cmd={{json .Config.Cmd}} User={{json .Config.User}} WorkingDir={{.Config.WorkingDir}}' woow-litellm:ci
           python3 - <<'PY'
           import json, subprocess
           lock = json.load(open("litellm/upstream.lock.json"))
@@ -144,10 +92,15 @@ jobs:
           missing = [f"{p['name']}-{p['version']}" for p in lock["wolfi_apk"]["apk_add"] if f"{p['name']}-{p['version']}" not in out]
           print(f"{len(out)} apk packages installed; pinned closure missing: {missing or 'none'}")
           assert not missing
-          labels = json.loads(subprocess.run(["docker", "image", "inspect", "-f", "{{json .Config.Labels}}", "woow-litellm:ci"],
-                                             capture_output=True, text=True, check=True).stdout)
-          assert labels["org.opencontainers.image.vendor"] == "WOOWTECH"
-          assert not [k for k, v in labels.items() if "chainguard" in (k + v).lower()], labels
+          cfg = json.loads(subprocess.run(["docker", "image", "inspect", "-f", "{{json .Config}}", "woow-litellm:ci"],
+                                          capture_output=True, text=True, check=True).stdout)
+          assert cfg["Labels"]["org.opencontainers.image.vendor"] == "WOOWTECH"
+          assert cfg["Entrypoint"] == ["/init"] and not cfg.get("Cmd"), (cfg["Entrypoint"], cfg.get("Cmd"))
+          assert cfg.get("User") in ("root", "0", ""), cfg.get("User")
+          env = dict(kv.split("=", 1) for kv in cfg["Env"])
+          for kv in lock["env"]:
+              k, v = kv.split("=", 1)
+              assert env.get(k) == v, k
           PY
       - name: playwright (headless Chromium for the browser check)
         run: |

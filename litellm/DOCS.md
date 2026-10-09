@@ -2,6 +2,11 @@
 
 > **測試版（experimental）**：尚未正式發佈，設定與資料格式在 0.1.x 期間仍可能調整。
 
+> **非公開散布**：本 add-on 只供 WOOWTECH 自有的 Home Assistant 主機使用。映像放在 GHCR 的**私人** package
+> （`ghcr.io/woowtech/woow-ha-litellm-amd64`），安裝前要先在 Supervisor 設定 `ghcr.io` 的唯讀憑證
+> （見下方「安裝前：映像憑證」）。映像直接以 BerriAI 的官方映像為底，內含 LiteLLM 的 enterprise 程式碼，
+> 與 Woow PaaS 相同，因此不對外散布。
+
 本 add-on 由 WOOWTECH 打包，不是 BerriAI 的官方產品；LiteLLM 是 BerriAI 的專案名稱。
 
 把 [LiteLLM](https://github.com/BerriAI/litellm)（OpenAI 相容的 AI 閘道）連同自己的 PostgreSQL 裝在 Home Assistant 上。
@@ -13,6 +18,18 @@ LiteLLM 版本與 Woow PaaS 相同（1.104.0），一起升版；也帶同一套
 - 只支援 **amd64**。
 - 記憶體：LiteLLM 加資料庫閒置時約 0.7–1 GB；建議主機有 4 GB 以上，2 GB 的主機不建議。
 - 第一次下載映像約 500 MB。
+
+## 安裝前：映像憑證
+
+映像是私人的，Supervisor 需要 `ghcr.io` 的讀取憑證才拉得到：
+
+1. 準備一個只有 `read:packages` 權限的 GitHub 權杖（WOOWTECH 帳號建立，專供 HA 主機拉映像）。
+2. 在 HA：設定 → 附加元件 → 附加元件商店 → 右上角選單 →「Registries」→ 新增：
+   伺服器 `ghcr.io`、使用者名稱 `WOOWTECH`、密碼填上面的權杖。
+   （或以 `ha supervisor registries add` 指令設定。）
+3. 再從 Woow 商店安裝 Woow LiteLLM。
+
+權杖只存在 Supervisor，不要寫進 add-on 的設定或任何檔案。
 
 ## 第一次啟動
 
@@ -87,19 +104,9 @@ OpenAI 相容端點在 `/v1`。**請在 LiteLLM 為每個用途建立虛擬 key*
 
 ## 不支援的功能
 
-映像不含 LiteLLM 的 enterprise 程式碼（授權不允許散布），也不設 `LITELLM_LICENSE`。實測（LiteLLM 1.104.0）影響如下：
-
-- **Responses API 的背景模式（`background: true`）**：回 HTTP 500（`No module named 'litellm_enterprise'`）。
-  **注意：錯誤發生在供應商已經收下請求之後**，供應商那邊的背景工作照樣建立並計費，但拿不到 response id，
-  無法查詢或取消。請不要使用背景模式。前景（一般）的 Responses API 正常。
-- **`generic_api` 回呼**：變成不做事的空殼（與 enterprise 在同一段匯入裡，一起失效）。
-- Email（Resend、SendGrid、SMTP）與 PagerDuty 回呼。
-- enterprise 的動態回呼控制、路由停用、金鑰管理參數。
-- batch／responses 成本檢查的排程工作。
-- Model hub 的自訂說明文件。
-- 管理介面中需要授權的頁面（SSO、進階稽核等）。
-
-另外不支援：多 worker、Redis、高可用。
+- LiteLLM 的 Enterprise 授權功能（SSO、進階稽核等）：映像含 enterprise 程式碼，但不設 `LITELLM_LICENSE`，
+  需要授權的功能與後台頁面無法使用（與 Woow PaaS 相同）。Responses API 的背景模式（`background: true`）可以使用。
+- 多 worker、Redis、高可用。
 
 ## 誰讀得到 master key 與後台密碼
 

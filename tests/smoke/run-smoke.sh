@@ -20,12 +20,14 @@ DATA="$WORK/data"
 NET=woow-hassio
 ADDON_IP=172.30.33.10
 SUP_IP=172.30.33.2
+MOCK_IP=172.30.33.20
 INGRESS_IP=172.30.32.2
 PW_PYTHON="${PW_PYTHON:-python3}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-$WORK/summary.md}"
 
 mkdir -p "$WORK" "$DATA"
 export ADDON="$ADDON_IP" INGRESS="http://$INGRESS_IP:8080" RESULTS="$WORK/results.jsonl" STATE_FILE="$WORK/state.json"
+export MOCK_UPSTREAM="http://$MOCK_IP:18080"
 : > "$RESULTS"
 
 mask() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::add-mask::$1"; fi; }
@@ -89,6 +91,9 @@ proc_env_value() { # pattern, variable → value (only for non-secret variables)
 
 docker network create --subnet 172.30.32.0/23 --gateway 172.30.32.1 "$NET" >/dev/null
 cp "$REPO/tests/fixtures/options.default.json" "$DATA/options.json"
+# OpenAI-compatible stand-in (Responses API background mode), on the same network as the add-on.
+docker run -d --name mock-upstream --network "$NET" --ip "$MOCK_IP" -v "$HERE:/smoke:ro" \
+  --entrypoint /app/.venv/bin/python "$IMAGE" -I /smoke/mock_upstream.py 18080 0.0.0.0 >/dev/null
 
 IMAGE_BYTES="$(docker image inspect -f '{{.Size}}' "$IMAGE")"
 LAYERS="$(docker image inspect -f '{{len .RootFS.Layers}}' "$IMAGE")"
@@ -220,6 +225,7 @@ cat "$WORK/boot-b.log"
 echo "----------------------------------------------------------------- emulators"
 docker logs supervisor-emu 2>&1 | tail -n 50 || true
 docker logs ingress-emu 2>&1 | tail -n 50 || true
+docker logs mock-upstream 2>&1 | tail -n 20 || true
 endgroup
 
 T1="$(date +%s)"
@@ -241,6 +247,7 @@ expect_refusal() { # name, log pattern: the container must stop by itself, non-z
   docker rm -f "$name" >/dev/null 2>&1 || true
 }
 in_data() { docker run --rm -v "$DATA:/data" --entrypoint sh "$IMAGE" -c "$1"; }
+put_options() { docker run --rm -i -v "$DATA:/data" --entrypoint sh "$IMAGE" -c 'cat > /data/options.json' < "$1"; }
 
 group "extra: HA restore leaves root-owned 0644 files (§12.2 item 7)"
 in_data 'chown -R 0:0 /data && find /data -type d -exec chmod 755 {} + && find /data -type f -exec chmod 644 {} +'
@@ -269,16 +276,36 @@ in_data 'mv /data/salt.keep /data/secrets/salt_key'
 endgroup
 
 group "extra: option validation (§12.2 item 10)"
-cp "$DATA/options.json" "$WORK/options.keep"
-python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); o["master_key"]="sk-1234"; json.dump(o, open(sys.argv[1], "w"))' "$DATA/options.json"
+in_data 'cat /data/options.json' > "$WORK/options.keep"
+python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); o["master_key"]="sk-1234"; json.dump(o, open(sys.argv[2], "w"))' "$WORK/options.keep" "$WORK/options.try"
+put_options "$WORK/options.try"
 start_addon woow-weak
 expect_refusal woow-weak "master_key"
 for key in FORWARDED_ALLOW_IPS LITELLM_DANGEROUSLY_PERMIT_WEAK_OR_UNSET_MASTER_KEY CHATGPT_AUTH_FILE; do
-  python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); o["env_vars"]=[{"key": sys.argv[2], "value": "x"}]; json.dump(o, open(sys.argv[3], "w"))' "$WORK/options.keep" "$key" "$DATA/options.json"
+  python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); o["env_vars"]=[{"key": sys.argv[2], "value": "x"}]; json.dump(o, open(sys.argv[3], "w"))' "$WORK/options.keep" "$key" "$WORK/options.try"
+  put_options "$WORK/options.try"
   start_addon "woow-env-$(echo "$key" | tr 'A-Z_' 'a-z-' | cut -c1-20)"
   expect_refusal "$CUR" "cannot be overridden"
 done
-cp "$WORK/options.keep" "$DATA/options.json"
+put_options "$WORK/options.keep"
+endgroup
+
+group "extra: LiteLLM keeps crashing → the container stops (§12.2 item 19)"
+start_addon woow-crash
+if wait_healthy woow-crash 600 >/dev/null; then
+  in_addon sh -c 'printf "model_list: [\n" > /run/litellm/config.yaml && /command/s6-svc -k /run/service/litellm'
+  code="$(timeout 300 docker wait woow-crash || echo timeout)"
+  docker logs woow-crash > "$WORK/woow-crash.log" 2>&1 || true
+  if [ "$code" != timeout ] && [ "$code" != 0 ] && grep -q 'failed 5 times within 5 minutes' "$WORK/woow-crash.log"; then
+    result "x/crash loop: container stopped with exit $code after 5 failures" PASS
+  else
+    result "x/crash loop: container stopped after 5 failures" FAIL "exit $code"
+    tail -n 60 "$WORK/woow-crash.log"
+  fi
+else
+  result "x/crash loop: container stopped after 5 failures" FAIL "did not become healthy first"
+fi
+docker rm -f woow-crash >/dev/null 2>&1 || true
 endgroup
 
 FAILED="$(grep -c '"status": "FAIL"' "$RESULTS" || true)"

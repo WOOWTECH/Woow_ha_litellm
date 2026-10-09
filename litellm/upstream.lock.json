@@ -1,5 +1,5 @@
 {
-  "_comment": "Pins for the Woow LiteLLM image (DESIGN v3.2 \u00a75.2). Top-level keys follow the M0 spike lock (SP1/SP4, spike/m0-sp1 55792ed) so tools/checks/*.py read this file directly; wolfi_apk and s6_overlay come from the SP2 desk draft (2026-10-09). litellm/Dockerfile must agree with this file (tests/test_config_contract.py).",
+  "_comment": "Pins for the Woow LiteLLM image (DESIGN v3.2 \u00a75.2, as changed by the owner on 2026-10-09: private image built directly on the upstream litellm-non_root image, enterprise code kept, nothing pruned). Upstream facts from the M0 SP1 lock (spike/m0-sp1 55792ed); wolfi_apk and s6_overlay from the SP2 desk draft. litellm/Dockerfile must agree with this file (tests/test_config_contract.py).",
   "image": "ghcr.io/berriai/litellm-non_root",
   "tag": "1.104.0",
   "litellm_version": "1.104.0",
@@ -79,17 +79,10 @@
   "env_overrides": {},
   "wolfi_signing_key_sha256": "f0031424cf46f7db780ce63a45f0fd6aa6f85f601e6bb3b7a91fe3d4d5b7d2cc",
   "wolfi_repository": "https://packages.wolfi.dev/os",
-  "source_date_epoch": 1791063324,
   "cosign_pub": {
     "path": "third_party/berriai-cosign.pub",
     "source": "https://raw.githubusercontent.com/BerriAI/litellm/0112e53046018d726492c814b3644b7d376029d0/cosign.pub",
     "sha256": "ff8869bf14ba9d10af7b64b9d479543b44daec0165e715753c43ff8a998f6dd3"
-  },
-  "expected_flattened_layer": {
-    "_comment": "SP4: the FROM-scratch base layer, identical on 4 clean builders (BuildKit v0.33.0, rewrite-timestamp, compatibility-version=30); baseline for 'unchanged unless LiteLLM changes'",
-    "digest": "sha256:03b441d95505eb7a97db5114e74f5e6b38c04f65c6bab690093724ebd502c46a",
-    "size": 402753327,
-    "diff_id": "sha256:e87d2a14e4aa3de987305e4dc2abf4c17e7e5baa65e1136cdd2fec20eba538e0"
   },
   "wolfi_apk": {
     "apkindex": {
@@ -352,7 +345,6 @@
     ]
   },
   "_todo": [
-    "upstream 52 apk packages with C: checksums, non-package ELF list, maturin exclude (supply-chain line)",
-    "apk add --simulate + installed-set comparison with C: checksums (SP2 \u00a710-2)"
+    "apk add --simulate + installed-set comparison with C: checksums (SP2 \u00a710-2), if wanted for the private image"
   ]
 }
