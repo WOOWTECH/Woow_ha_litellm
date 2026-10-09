@@ -100,7 +100,7 @@ for sc in "$@"; do
       docker exec "$name" sh -c 'printf "model_list: [\n" > /run/litellm/config.yaml && /command/s6-svc -k /run/service/litellm'
       ;;
     early)
-      for _ in $(seq 1 600); do docker exec "$name" test -s /run/litellm/config.yaml 2>/dev/null && break; sleep 0.1; done
+      for _ in $(seq 1 600); do docker exec "$name" sh -c "test -s /run/litellm/config.yaml" 2>/dev/null && break; sleep 0.1; done
       docker exec "$name" sh -c 'printf "model_list: [\n" > /run/litellm/config.yaml'
       snap "$name" "trigger"
       ;;
