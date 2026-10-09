@@ -1,0 +1,139 @@
+name: Publish LiteLLM add-on images
+
+# Owner decision 2026-10-09 (DESIGN v3.3): the image is PRIVATE — it carries LiteLLM's
+# enterprise code like the WOOW PaaS image — and is installed only on WOOWTECH's own Home
+# Assistant hosts, which pull it with a read:packages registry credential. Never make the
+# package public, never attach the image (or any layer of it) to a release or an artifact.
+#
+# Manual only, from main:
+#   mode=probe   pushes a tiny FROM-scratch image tagged `visibility-probe` to the package, so
+#                the package exists and its visibility can be checked before any real image is
+#                pushed (a package first published from a workflow is private; we verify, not trust).
+#   mode=publish builds amd64 exactly like ci.yml, runs the image facts and the container smoke,
+#                checks the package is private, refuses an existing version tag, pushes
+#                <version> and checks the visibility again.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "probe = create/check the private package; publish = build, smoke, push <version>"
+        type: choice
+        options: [publish, probe]
+        default: publish
+      confirmed_private:
+        description: "Only if the API cannot report visibility: I checked on GitHub that the package is private"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-litellm-addon
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/woowtech/woow-ha-litellm-amd64
+  PACKAGE_API: /users/WOOWTECH/packages/container/woow-ha-litellm-amd64
+
+jobs:
+  probe:
+    if: inputs.mode == 'probe'
+    name: create / check the private package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: only from main
+        run: test "$GITHUB_REF" = refs/heads/main
+      - name: push the probe image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/probe && cd /tmp/probe
+          echo "visibility probe for ${IMAGE} (no content)" > README.txt
+          printf 'FROM scratch\nCOPY README.txt /README.txt\nLABEL org.opencontainers.image.source=https://github.com/WOOWTECH/Woow_ha_litellm\n' > Dockerfile
+          docker build -q -t "${IMAGE}:visibility-probe" .
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          docker push -q "${IMAGE}:visibility-probe"
+      - name: report the package visibility
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if vis="$(gh api "${PACKAGE_API}" --jq .visibility 2>/tmp/err)"; then
+            echo "package visibility: ${vis}"
+            test "${vis}" = private || { echo "::error::package is ${vis} — set it to private on GitHub before publishing"; exit 1; }
+          else
+            echo "::warning::the workflow token cannot read the package visibility ($(head -c 200 /tmp/err))"
+            echo "::warning::check it on GitHub, then publish with confirmed_private=true"
+          fi
+
+  publish:
+    if: inputs.mode == 'publish'
+    name: build amd64, smoke, push (private)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: only from main
+        run: test "$GITHUB_REF" = refs/heads/main
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0 (Node 24)
+        with:
+          persist-credentials: false
+      - name: version, plugin lock
+        run: |
+          version="$(sed -n 's/^version: *//p' litellm/config.yaml)"
+          echo "${version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::bad version ${version}"; exit 1; }
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+          tools/verify-woow-plugin.sh --offline
+      - name: package must be private, version tag must be new
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIRMED_PRIVATE: ${{ inputs.confirmed_private }}
+        run: |
+          if vis="$(gh api "${PACKAGE_API}" --jq .visibility 2>/tmp/err)"; then
+            echo "package visibility: ${vis}"
+            test "${vis}" = private || { echo "::error::package is ${vis}; refusing to push"; exit 1; }
+          elif [ "${CONFIRMED_PRIVATE}" = true ]; then
+            echo "::warning::visibility not readable by the workflow token; publishing on the operator's confirmation"
+          else
+            echo "::error::cannot read the package visibility ($(head -c 200 /tmp/err))"
+            echo "::error::run mode=probe first, check on GitHub, then publish with confirmed_private=true"
+            exit 1
+          fi
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          if docker manifest inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
+            echo "::error::${IMAGE}:${VERSION} already exists — bump litellm/config.yaml version"; exit 1
+          fi
+      - name: build (no cache)
+        run: |
+          docker buildx build --platform linux/amd64 --pull --no-cache --provenance=false --sbom=false \
+            --build-arg BUILD_VERSION="${VERSION}" --build-arg BUILD_REF="${GITHUB_SHA}" --build-arg BUILD_ARCH=amd64 \
+            --load -t "${IMAGE}:${VERSION}" litellm
+      - name: image facts
+        run: tools/ci-image-facts.sh "${IMAGE}:${VERSION}"
+      - name: playwright (headless Chromium for the browser check)
+        run: |
+          python3 -m venv /tmp/pw
+          /tmp/pw/bin/pip install --quiet playwright==1.52.0
+          /tmp/pw/bin/python -m playwright install --with-deps chromium > /tmp/pw-install.log 2>&1 || { tail -n 50 /tmp/pw-install.log; exit 1; }
+      - name: container smoke
+        env:
+          PW_PYTHON: /tmp/pw/bin/python
+        run: tests/smoke/run-smoke.sh "${IMAGE}:${VERSION}"
+      - name: push
+        run: |
+          docker push "${IMAGE}:${VERSION}" | tail -n 3
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest}}' \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+          echo "::notice title=published::${IMAGE}:${VERSION}@${digest}"
+          echo "published ${IMAGE}:${VERSION}@${digest}" >> "$GITHUB_STEP_SUMMARY"
+      - name: still private
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if vis="$(gh api "${PACKAGE_API}" --jq .visibility 2>/dev/null)"; then
+            echo "package visibility: ${vis}"; test "${vis}" = private
+          else
+            echo "::warning::check on GitHub that ${IMAGE} is still private"
+          fi
