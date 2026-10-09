@@ -48,7 +48,9 @@ jobs:
           python3 -m venv /tmp/venv
           /tmp/venv/bin/pip install --quiet pytest==8.3.4 pyyaml==6.0.2 apscheduler==3.11.2 yamllint==1.35.1
       - name: yamllint
-        run: /tmp/venv/bin/yamllint -d '{extends: relaxed, rules: {line-length: {max: 160}}}' litellm/config.yaml litellm/translations .github/workflows
+        run: |
+          /tmp/venv/bin/yamllint -d '{extends: relaxed, rules: {line-length: {max: 160}}}' \
+            litellm/config.yaml litellm/translations .github/workflows
       - name: Woow plugin copy equals its lock
         run: tools/verify-woow-plugin.sh --offline
       - name: unit tests

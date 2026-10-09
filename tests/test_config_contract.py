@@ -300,6 +300,7 @@ def test_workflows_never_cache_push_or_upload_images():
     assert workflows()
     for wf in workflows():
         text = wf.read_text()
+        assert isinstance(yaml.safe_load(text), dict), wf.name
         for bad in ("cache-to", "type=gha", "mode=max", "cache-from"):
             assert bad not in text, f"{wf.name}: {bad}"
         if wf.name == "ci.yml":
