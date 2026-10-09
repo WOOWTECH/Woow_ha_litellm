@@ -78,7 +78,7 @@
  "env_overrides": {},
  "wolfi_signing_key_sha256": "f0031424cf46f7db780ce63a45f0fd6aa6f85f601e6bb3b7a91fe3d4d5b7d2cc",
  "wolfi_repository": "https://packages.wolfi.dev/os",
- "source_date_epoch": null,
+ "source_date_epoch": 1791063324,
  "cosign_pub": {
   "path": "spike/third_party/berriai-cosign.pub",
   "source": "https://raw.githubusercontent.com/BerriAI/litellm/0112e53046018d726492c814b3644b7d376029d0/cosign.pub",

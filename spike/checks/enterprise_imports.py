@@ -148,7 +148,11 @@ def scan_tree(tree: ast.AST, pkg: str):
 
 
 def iter_py(root: str, excludes: list[str]):
-    ex = [os.path.realpath(e) for e in excludes]
+    # An exclude only prunes below this root: `--root app=/app --exclude /app/.venv` must
+    # not also swallow `--root site-packages=/app/.venv/lib/.../site-packages`.
+    real_root = os.path.realpath(root)
+    ex = [e for e in (os.path.realpath(x) for x in excludes)
+          if not (real_root == e or real_root.startswith(e + os.sep))]
     for dirpath, dirnames, filenames in os.walk(root):
         real = os.path.realpath(dirpath)
         if any(real == e or real.startswith(e + os.sep) for e in ex):

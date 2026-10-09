@@ -26,8 +26,9 @@ env:
   LOCK: spike/upstream.lock.json
   BUILDKIT_IMAGE: moby/buildkit:v0.33.0
   BUILDX_NO_DEFAULT_ATTESTATIONS: '1'
-  # Only the spike's flattened base: one layer.
-  EXPECT_LAYERS: '1'
+  # The flattened layer plus the empty layer BuildKit emits for `WORKDIR /app` on an
+  # existing directory (diffID of an empty tar; reported by layer_scan.py as empty).
+  EXPECT_LAYERS: '2'
 
 jobs:
   build-a:

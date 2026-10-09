@@ -83,6 +83,15 @@ else
   record import-proxy-server FAIL "rc=$rc: $(tail -c 600 "$OUT/import.log" | tr '\n' ' ')"
 fi
 
+# What the module-level `except Exception` in litellm_logging.py leaves behind (facts C2):
+# the same try block also imports the MIT GenericAPILogger, which therefore degrades too.
+docker run --rm --network none -e LITELLM_LOCAL_MODEL_COST_MAP=True --entrypoint python "$IMAGE" -c "
+from litellm.litellm_core_utils import litellm_logging as l
+g = l.GenericAPILogger
+print(f'GenericAPILogger={g.__module__}.{g.__name__}; EnterpriseCallbackControls={l.EnterpriseCallbackControls}; EnterpriseStandardLoggingPayloadSetupVAR={l.EnterpriseStandardLoggingPayloadSetupVAR}')
+" > "$OUT/degraded-symbols.log" 2>&1
+record degraded-symbols INFO "$(tail -c 400 "$OUT/degraded-symbols.log" | tr '\n' ' ')"
+
 # --- 5. migrations on an empty database ---------------------------------------
 ndirs=$(docker run --rm --network none --entrypoint sh "$IMAGE" -c \
   'ls -1d /app/.venv/lib/python3.13/site-packages/litellm_proxy_extras/migrations/*/ | wc -l')

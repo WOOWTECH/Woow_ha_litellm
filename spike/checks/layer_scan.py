@@ -29,6 +29,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import oci  # noqa: E402
 from rules import forbidden_path, whiteout_hides_forbidden  # noqa: E402
 
+# diffID of an empty tar (1024 zero bytes): what BuildKit emits for `WORKDIR` on a
+# directory that already exists. Its gzip blob sha256:4f4fb700... is shared by every
+# image that has one, so it costs a 32-byte download once per host.
+EMPTY_TAR_DIFF_ID = "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
 KEYS_DIR = "etc/apk/keys"
 REPOS = "etc/apk/repositories"
 
@@ -122,6 +126,7 @@ def main() -> int:
         "failures": failures,
         "manifest_digest": img.manifest_digest,
         "layers": layers,
+        "empty_layers": [i for i, d in enumerate(img.diff_ids) if d == EMPTY_TAR_DIFF_ID],
         "forbidden": forbidden[:200],
         "whiteouts": whiteouts[:200],
         "content_hits": content_hits[:200],
@@ -133,7 +138,7 @@ def main() -> int:
     if a.summary:
         with open(a.summary, "w", encoding="utf-8") as fh:
             json.dump(summary, fh, indent=1)
-    print(f"layer-scan: {summary['result']}  layers={len(img.layers)} entries={[l.get('entries') for l in layers]} "
+    print(f"layer-scan: {summary['result']}  layers={len(img.layers)} (empty: {summary['empty_layers']}) entries={[l.get('entries') for l in layers]} "
           f"whiteouts={len(whiteouts)} forbidden={len(forbidden)} content_hits={len(content_hits)} keys={key_names}")
     for f in failures:
         print("  FAIL:", f)
