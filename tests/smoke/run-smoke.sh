@@ -290,22 +290,59 @@ done
 put_options "$WORK/options.keep"
 endgroup
 
-group "extra: LiteLLM keeps crashing → the container stops (§12.2 item 19)"
+# §12.2 item 19 (§7.1, §7.6): 5 failures within 5 minutes stop the whole container by itself, with
+# a non-zero exit code and the reason in the log, and nothing restarts after that: exactly one FATAL
+# line, at most 5 failures counted, the container gone within 60 s of the FATAL line. Three paths:
+#   ready    LiteLLM crashes after the start has completed (the halt alone stops the container);
+#   early    LiteLLM crashes before its first readiness: s6-rc (stage 2) is still waiting for it and
+#            holds the s6-rc lock that the shutdown (stage 3) needs; the finish script's exit 125
+#            (permanent failure) is what ends that wait. Before the fix this path never stopped;
+#   pg       PostgreSQL crashes before its first readiness (same finish script).
+crash_check() { # name, label: wait for the container to stop by itself, then check how
+  local name="$1" label="$2" code log="$WORK/$1.log" n fatal tf te gap=-
+  code="$(timeout 300 docker wait "$name" || echo timeout)"
+  docker logs -t "$name" > "$log" 2>&1 || true
+  n="$(sed -n 's/.*(\([0-9][0-9]*\) failure(s) within 5 minutes).*/\1/p' "$log" | sort -n | tail -n 1)"
+  fatal="$(grep -c 'FATAL failed 5 times within 5 minutes' "$log" || true)"
+  tf="$(grep -m 1 'FATAL failed 5 times within 5 minutes' "$log" | cut -d ' ' -f 1)"
+  te="$(docker inspect -f '{{.State.FinishedAt}}' "$name" 2>/dev/null || true)"
+  if [ "$code" != timeout ] && [ -n "$tf" ] && [ -n "$te" ]; then gap=$(( $(date -d "$te" +%s) - $(date -d "$tf" +%s) )); fi
+  if [ "$code" != timeout ] && [ "$code" != 0 ] && [ "$fatal" = 1 ] && [ "${n:-0}" = 5 ] && [ "$gap" != - ] && [ "$gap" -le 60 ]; then
+    result "x/crash loop ($label): stopped with exit $code, ${gap}s after the 5th failure" PASS
+  else
+    result "x/crash loop ($label): stopped after 5 failures" FAIL "exit $code; failures counted ${n:-0}; FATAL lines $fatal; FATAL to exit ${gap}s"
+    grep -E 's6-rc|rc\.init|woow-litellm\] (litellm|postgres):|s6-linux-init' "$log" | tail -n 40
+    tail -n 20 "$log"
+  fi
+  docker rm -f "$name" >/dev/null 2>&1 || true
+}
+
+group "extra: LiteLLM or PostgreSQL keeps crashing → the container stops (§12.2 item 19)"
 start_addon woow-crash
 if wait_healthy woow-crash 600 >/dev/null; then
+  # the start has completed: s6-rc (stage 2) is done and has released its lock
+  for _ in $(seq 1 60); do in_addon /command/s6-rc -a list 2>/dev/null | grep -qx woow-spendlogs-indexes && break; sleep 1; done
   in_addon sh -c 'printf "model_list: [\n" > /run/litellm/config.yaml && /command/s6-svc -k /run/service/litellm'
-  code="$(timeout 300 docker wait woow-crash || echo timeout)"
-  docker logs woow-crash > "$WORK/woow-crash.log" 2>&1 || true
-  if [ "$code" != timeout ] && [ "$code" != 0 ] && grep -q 'failed 5 times within 5 minutes' "$WORK/woow-crash.log"; then
-    result "x/crash loop: container stopped with exit $code after 5 failures" PASS
-  else
-    result "x/crash loop: container stopped after 5 failures" FAIL "exit $code"
-    tail -n 60 "$WORK/woow-crash.log"
-  fi
+  crash_check woow-crash "LiteLLM, after the start"
 else
-  result "x/crash loop: container stopped after 5 failures" FAIL "did not become healthy first"
+  result "x/crash loop (LiteLLM, after the start): stopped after 5 failures" FAIL "did not become healthy first"
+  docker rm -f woow-crash >/dev/null 2>&1 || true
 fi
-docker rm -f woow-crash >/dev/null 2>&1 || true
+
+start_addon woow-crash-early
+# init-woow-env writes the config long before litellm's first start (after postgres and migrations)
+for _ in $(seq 1 300); do in_addon sh -c 'test -s /run/litellm/config.yaml' 2>/dev/null && break; sleep 0.2; done
+in_addon sh -c 'printf "model_list: [\n" > /run/litellm/config.yaml'
+crash_check woow-crash-early "LiteLLM, before its first readiness"
+req "x/crash loop (LiteLLM, before its first readiness): s6-rc gave up waiting for litellm" \
+  grep -q 'unable to start service litellm' "$WORK/woow-crash-early.log"
+
+in_data "echo 'woow_smoke_bogus_parameter = 1' >> /data/postgres/postgresql.auto.conf"
+start_addon woow-crash-pg
+crash_check woow-crash-pg "PostgreSQL, before its first readiness"
+req "x/crash loop (PostgreSQL, before its first readiness): s6-rc gave up waiting for postgres" \
+  grep -q 'unable to start service postgres' "$WORK/woow-crash-pg.log"
+in_data "sed -i '/^woow_smoke_bogus_parameter/d' /data/postgres/postgresql.auto.conf"
 endgroup
 
 FAILED="$(grep -c '"status": "FAIL"' "$RESULTS" || true)"

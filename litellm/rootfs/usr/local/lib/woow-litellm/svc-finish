@@ -5,6 +5,17 @@
 # with a non-zero exit code, so the Supervisor marks the add-on as failed instead of leaving a
 # half-up add-on (nginx up, "starting…" forever). A deliberate stop (s6-rc down, container stop)
 # is not counted.
+#
+# Stopping the container needs both of these (notes/m1-crashloop-fix.md):
+#   halt      asks s6-linux-init-shutdownd to shut down; its stage 3 (rc.shutdown) is
+#             `s6-rc -bda change`, which first waits for the s6-rc lock;
+#   exit 125  permanent failure for s6-supervise: the service is not started again (like
+#             `s6-svc -O`), and its 'O' event makes an `s6-rc change` that still waits for this
+#             service to become ready fail at once. That is stage 2 when the crash loop starts
+#             before the first readiness (S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0: no time limit); it
+#             holds the s6-rc lock, so without the 125 the shutdown waits for the lock forever while
+#             s6 keeps restarting the service. With S6_BEHAVIOUR_IF_STAGE2_FAILS=2 stage 2 then
+#             halts too and writes its own non-zero exit code (s6-rc's) over ours.
 name="${1:?service name}"
 code="${2:-0}"
 sig="${3:-0}"
@@ -25,12 +36,7 @@ if [ "$n" -ge 5 ]; then
   rc=1
   if [ "$code" -gt 0 ] 2>/dev/null && [ "$code" -lt 256 ]; then rc="$code"; fi
   echo "$rc" > /run/s6-linux-init-container-results/exitcode
-  # DIAG (temporary): same effect as `exec halt` (hpr exits 0), plus the state around it.
-  /run/s6/basedir/bin/halt
-  h=$?
-  if /command/s6-rc -a list >/dev/null 2>&1; then lock=free; else lock=HELD; fi
-  # shellcheck disable=SC2009
-  echo "[woow-litellm] DIAG $name: n=$n halt_rc=$h s6-rc_lock=$lock procs: $(ps -o pid,etime,args | grep -E '[s]6-rc |[r]c\.init|[r]c\.shutdown|[s]6-svlisten' | tr -s ' ' | tr '\n' ';')" >&2
-  exit 0
+  /run/s6/basedir/bin/halt || echo "[woow-litellm] $name: WARNING the stop request to s6 failed" >&2
+  exit 125
 fi
 exit 0

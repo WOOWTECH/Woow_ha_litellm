@@ -227,6 +227,11 @@ def test_longrun_controls():
         assert (S6 / svc / "notification-fd").read_text().strip() == "3"
         assert (S6 / svc / "data/check").exists()
         assert "svc-finish" in (S6 / svc / "finish").read_text()
+    # 5 failures: halt AND exit 125 (permanent failure), never `exec halt` alone: a crash loop
+    # before the first readiness keeps stage 2 waiting on the s6-rc lock that stage 3 needs.
+    finish = code_lines(ROOTFS / "usr/local/lib/woow-litellm/svc-finish")
+    assert "/run/s6/basedir/bin/halt" in finish and "exec /run/s6/basedir/bin/halt" not in finish
+    assert re.search(r"/run/s6/basedir/bin/halt[^\n]*\n\s*exit 125\n", finish)
     run = (S6 / "litellm/run").read_text()
     assert "--log_config /usr/share/woow-litellm/uvicorn-log.json" in run
     assert "s6-setuidgid nobody" in run and "/command/cd /app" in run
