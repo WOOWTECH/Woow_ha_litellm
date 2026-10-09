@@ -40,7 +40,8 @@ LiteLLM 版本與 Woow PaaS 相同（1.104.0），一起升版；也帶同一套
    - HA 的基底映像 `ghcr.io/home-assistant/amd64-base`；
    - 任一支已安裝的 Woow MCP 映像，例如 `ghcr.io/woowtech/amd64-mcp-odoo`。
    兩者都要拉得到；任何一個失敗就先回復（見下）再查原因。
-4. 從 Woow 商店安裝 Woow LiteLLM。
+4. 加入本 repository（不在 Woow 商店上架）：設定 → 附加元件 → 附加元件商店 → 右上角選單 →「Repositories」，
+   加入 `https://github.com/WOOWTECH/Woow_ha_litellm`，再從商店清單安裝 Woow LiteLLM。
 
 **出事時回復**：在 HA 終端機執行 `ha registries remove ghcr.io`（CLI 版本較舊時為 `ha docker registries remove ghcr.io`），HA 自身與公開的 add-on 會回到匿名拉取；
 Woow LiteLLM 之後就無法更新或重新安裝，直到憑證修好為止。
@@ -70,7 +71,7 @@ Woow LiteLLM 之後就無法更新或重新安裝，直到憑證修好為止。
 
 ## 給同一台 HA 的其他 add-on
 
-內部位址：`http://<add-on 主機名>:4000`（例如從 Woow 商店安裝時是 `http://1b7b4ce7-woow-litellm:4000`），
+內部位址：`http://<add-on 主機名>:4000`（主機名是 `<repository 前綴>-woow-litellm`，在 add-on 資訊頁可看到），
 OpenAI 相容端點在 `/v1`。**請在 LiteLLM 為每個用途建立虛擬 key**（可限制模型、預算、效期），不要把 master key 給其他 add-on。
 
 ## 區網與對外
