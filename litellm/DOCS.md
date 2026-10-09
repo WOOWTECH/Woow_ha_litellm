@@ -21,15 +21,29 @@ LiteLLM 版本與 Woow PaaS 相同（1.104.0），一起升版；也帶同一套
 
 ## 安裝前：映像憑證
 
-映像是私人的，Supervisor 需要 `ghcr.io` 的讀取憑證才拉得到：
+映像是私人的，Supervisor 要有 `ghcr.io` 的讀取憑證才拉得到。**請先讀完這一段再設定。**
 
-1. 準備一個只有 `read:packages` 權限的 GitHub 權杖（WOOWTECH 帳號建立，專供 HA 主機拉映像）。
-2. 在 HA：設定 → 附加元件 → 附加元件商店 → 右上角選單 →「Registries」→ 新增：
-   伺服器 `ghcr.io`、使用者名稱 `WOOWTECH`、密碼填上面的權杖。
-   （或以 `ha supervisor registries add` 指令設定。）
-3. 再從 Woow 商店安裝 Woow LiteLLM。
+- **影響範圍**：Supervisor 的 registry 憑證是以主機名稱套用的，設了 `ghcr.io` 之後，這台 HA 從 `ghcr.io`
+  拉的**所有**映像都會帶這組憑證，包括 HA 自身（Core、Supervisor、外掛基底）、Woow MCP add-on 與商店裡其他放在
+  `ghcr.io` 的 add-on。憑證錯了或被撤銷，這些映像的更新都可能失敗。
+- **權杖**：只能用**服務帳號**建立的 GitHub **classic** token，權限**只勾 `read:packages`**，**不設到期日**
+  （到期後整台 HA 從 `ghcr.io` 的更新都會失敗）。不要用個人帳號的權杖，也不要多給任何權限。
+- 權杖只存在 Supervisor，不要寫進 add-on 的設定、自動化或任何檔案。
 
-權杖只存在 Supervisor，不要寫進 add-on 的設定或任何檔案。
+步驟：
+
+1. 以服務帳號建立上述 classic token（只有 `read:packages`、不設到期）。
+2. 在 HA 加入憑證：設定 → 附加元件 → 附加元件商店 → 右上角選單 →「Registries」→ 新增，
+   伺服器 `ghcr.io`、使用者名稱填服務帳號、密碼填權杖；或在 HA 的終端機執行
+   `ha registries add ghcr.io --username <服務帳號> --password <權杖>`（CLI 版本較舊時為 `ha docker registries add …`）。
+3. **設好後立刻試拉兩支公開映像，確認沒有被擋**（例如在 HA 終端機或有 Docker 的主機上，以同一組憑證）：
+   - HA 的基底映像 `ghcr.io/home-assistant/amd64-base`；
+   - 任一支已安裝的 Woow MCP 映像，例如 `ghcr.io/woowtech/amd64-mcp-odoo`。
+   兩者都要拉得到；任何一個失敗就先回復（見下）再查原因。
+4. 從 Woow 商店安裝 Woow LiteLLM。
+
+**出事時回復**：在 HA 終端機執行 `ha registries remove ghcr.io`（CLI 版本較舊時為 `ha docker registries remove ghcr.io`），HA 自身與公開的 add-on 會回到匿名拉取；
+Woow LiteLLM 之後就無法更新或重新安裝，直到憑證修好為止。
 
 ## 第一次啟動
 

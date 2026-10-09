@@ -331,7 +331,8 @@ import json, sys
 for line in open(sys.argv[1]):
     r = json.loads(line)
     d = r["detail"].replace("|", "\\|").replace("\n", " ")
-    print(f"| {r[\"check\"]} | {r[\"status\"]} | {d} |")' "$RESULTS"
+    c, st = r["check"].replace("|", "\\|"), r["status"]
+    print(f"| {c} | {st} | {d} |")' "$RESULTS"
 } >> "$SUMMARY"
 cp "$RESULTS" "$WORK/results.final.jsonl"
 echo "summary: $PASSED pass, $WARNED warn, $FAILED fail"
