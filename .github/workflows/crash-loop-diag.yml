@@ -1,0 +1,39 @@
+name: crash-loop diagnostics (temporary)
+
+# TEMPORARY: repeats the "5 failures stop the container" scenarios on one image per shard, with
+# state snapshots (s6-rc lock, stage 2/3 processes, s6-svstat). Removed once the fix is verified.
+on:
+  push:
+    branches: [feat/m1-core]
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: "space-separated: healthy live early pg"
+        default: "early pg live live healthy healthy"
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    name: crash-loop diag ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0 (Node 24)
+        with:
+          persist-credentials: false
+      - name: build (runner's Docker only)
+        run: |
+          docker buildx build --platform linux/amd64 --pull --no-cache --provenance=false --sbom=false \
+            --build-arg BUILD_REF="${GITHUB_SHA}" --load -t woow-litellm:ci litellm
+      - name: crash-loop scenarios
+        env:
+          SCENARIOS: ${{ inputs.scenarios || 'early pg live live healthy healthy' }}
+        run: |
+          # shellcheck disable=SC2086  # word splitting on purpose
+          tests/smoke/crash-loop-diag.sh woow-litellm:ci $SCENARIOS

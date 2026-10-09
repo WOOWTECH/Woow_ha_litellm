@@ -25,6 +25,12 @@ if [ "$n" -ge 5 ]; then
   rc=1
   if [ "$code" -gt 0 ] 2>/dev/null && [ "$code" -lt 256 ]; then rc="$code"; fi
   echo "$rc" > /run/s6-linux-init-container-results/exitcode
-  exec /run/s6/basedir/bin/halt
+  # DIAG (temporary): same effect as `exec halt` (hpr exits 0), plus the state around it.
+  /run/s6/basedir/bin/halt
+  h=$?
+  if /command/s6-rc -a list >/dev/null 2>&1; then lock=free; else lock=HELD; fi
+  # shellcheck disable=SC2009
+  echo "[woow-litellm] DIAG $name: n=$n halt_rc=$h s6-rc_lock=$lock procs: $(ps -o pid,etime,args | grep -E '[s]6-rc |[r]c\.init|[r]c\.shutdown|[s]6-svlisten' | tr -s ' ' | tr '\n' ';')" >&2
+  exit 0
 fi
 exit 0
