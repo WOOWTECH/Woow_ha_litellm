@@ -1,0 +1,33 @@
+#!/bin/sh
+# litellm-predump (DESIGN §7.1, §7.5): a pg_dump before the one-way migration whenever the image's
+# LiteLLM version differs from the one the database was last migrated with. No dump, no migration.
+set -eu
+export WOOW_STEP=litellm-predump
+. /usr/local/lib/woow-litellm/common.sh
+cd /
+DIR=/data/pre-upgrade-dumps
+
+cur="$(jq -r .litellm_version /usr/share/woow-litellm/build-info.json)"
+prev="$(woow_init state-get litellm_version)"
+if [ "$prev" = "$cur" ]; then
+  log "database already migrated for LiteLLM $cur; no dump needed"
+  exit 0
+fi
+if [ "$(psql_su -d litellm -c "SELECT to_regclass('public._prisma_migrations') IS NOT NULL")" != "t" ]; then
+  log "fresh database: nothing to back up"
+  exit 0
+fi
+name="pre-${prev:-unknown}-to-${cur:?}-$(date -u +%Y%m%dT%H%M%SZ).dump"
+tmp="${DIR:?}/${name:?}.tmp"
+log "LiteLLM ${prev:-unknown} -> $cur: writing $name before migrating"
+if ! as_postgres /usr/bin/pg_dump -Fc --no-owner -h "$PGSOCK" -U postgres -d litellm -f "$tmp"; then
+  rm -f -- "$tmp"
+  fatal "the pre-upgrade dump failed; the one-way migration is NOT run without it. Free disk space and start the add-on again"
+fi
+mv -- "$tmp" "$DIR/$name"
+# shellcheck disable=SC2012  # our own file names (pre-<ver>-to-<ver>-<UTC>.dump)
+ls -1t "$DIR"/pre-*.dump 2>/dev/null | tail -n +3 | while read -r old; do
+  rm -f -- "${old:?}"
+  log "removed the older dump $(basename "$old")"
+done
+log "dump written: pre-upgrade-dumps/$name ($(du -k "$DIR/$name" | cut -f1) KiB)"

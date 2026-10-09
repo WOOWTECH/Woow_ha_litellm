@@ -1,0 +1,113 @@
+name: CI
+
+# M1 core (DESIGN v3.2 §12.1, §12.2): lint + unit tests, then an amd64 build loaded into the
+# runner's own Docker (never pushed, no build cache, no artifact) and the container smoke test.
+on:
+  push:
+    branches: [feat/m1-core]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-unit:
+    name: lint + unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0 (Node 24)
+        with:
+          persist-credentials: false
+      - name: shellcheck
+        run: |
+          shellcheck --version | head -n 2
+          shellcheck -s sh \
+            litellm/rootfs/usr/local/lib/woow-litellm/common.sh \
+            litellm/rootfs/usr/local/lib/woow-litellm/woow-init \
+            litellm/rootfs/usr/local/lib/woow-litellm/svc-finish \
+            litellm/rootfs/usr/local/lib/woow-litellm/init-postgres \
+            litellm/rootfs/usr/local/lib/woow-litellm/init-db \
+            litellm/rootfs/usr/local/lib/woow-litellm/litellm-predump \
+            litellm/rootfs/usr/local/lib/woow-litellm/litellm-migrate \
+            litellm/rootfs/usr/local/lib/woow-litellm/woow-revoke-ui-sessions \
+            litellm/rootfs/usr/local/lib/woow-litellm/woow-spendlogs-indexes \
+            litellm/rootfs/usr/local/bin/woow-healthcheck \
+            litellm/rootfs/etc/s6-overlay/s6-rc.d/*/run \
+            litellm/rootfs/etc/s6-overlay/s6-rc.d/*/finish \
+            litellm/rootfs/etc/s6-overlay/s6-rc.d/*/data/check \
+            tools/*.sh
+          shellcheck -s bash tests/smoke/run-smoke.sh
+      - name: python tools
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet pytest==8.3.4 pyyaml==6.0.2 apscheduler==3.11.2 yamllint==1.35.1
+      - name: yamllint
+        run: |
+          /tmp/venv/bin/yamllint -d '{extends: relaxed, rules: {line-length: {max: 160}}}' \
+            litellm/config.yaml litellm/translations .github/workflows
+      - name: Woow plugin copy equals its lock
+        run: tools/verify-woow-plugin.sh --offline
+      - name: unit tests
+        run: /tmp/venv/bin/pytest -q tests
+
+  build-smoke:
+    name: build amd64 + container smoke
+    needs: lint-unit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0 (Node 24)
+        with:
+          persist-credentials: false
+      - name: build (loaded into the runner's Docker only; nothing pushed, no cache)
+        run: |
+          version="$(sed -n 's/^version: *//p' litellm/config.yaml)"
+          start=$(date +%s)
+          docker buildx build --platform linux/amd64 --pull --no-cache --provenance=false --sbom=false \
+            --build-arg BUILD_VERSION="$version" --build-arg BUILD_REF="${GITHUB_SHA}" --build-arg BUILD_ARCH=amd64 \
+            --load -t woow-litellm:ci litellm
+          echo "build took $(( $(date +%s) - start ))s"
+          docker image inspect -f 'id={{.Id}} size={{.Size}} layers={{len .RootFS.Layers}}' woow-litellm:ci
+          docker history --format '{{.Size}}\t{{.CreatedBy}}' woow-litellm:ci | head -n 8 | cut -c1-160
+      - name: image facts
+        run: |
+          docker run --rm --entrypoint sh woow-litellm:ci -c '
+            set -e
+            postgres --version; nginx -v; curl --version | head -n1; jq --version
+            id postgres; id woow-nginx; id nobody
+            test -d /app/enterprise && echo "enterprise code present (private image, owner decision 2026-10-09)"'
+          docker image inspect -f '{{json .Config.Labels}}' woow-litellm:ci | python3 -m json.tool
+          docker image inspect -f 'Entrypoint={{json .Config.Entrypoint}} Cmd={{json .Config.Cmd}} User={{json .Config.User}} WorkingDir={{.Config.WorkingDir}}' woow-litellm:ci
+          python3 - <<'PY'
+          import json, subprocess
+          lock = json.load(open("litellm/upstream.lock.json"))
+          out = subprocess.run(["docker", "run", "--rm", "--entrypoint", "apk", "woow-litellm:ci", "info", "-v"],
+                               capture_output=True, text=True, check=True).stdout.split()
+          missing = [f"{p['name']}-{p['version']}" for p in lock["wolfi_apk"]["apk_add"] if f"{p['name']}-{p['version']}" not in out]
+          print(f"{len(out)} apk packages installed; pinned closure missing: {missing or 'none'}")
+          assert not missing
+          cfg = json.loads(subprocess.run(["docker", "image", "inspect", "-f", "{{json .Config}}", "woow-litellm:ci"],
+                                          capture_output=True, text=True, check=True).stdout)
+          assert cfg["Labels"]["org.opencontainers.image.vendor"] == "WOOWTECH"
+          assert cfg["Entrypoint"] == ["/init"] and not cfg.get("Cmd"), (cfg["Entrypoint"], cfg.get("Cmd"))
+          assert cfg.get("User") in ("root", "0", ""), cfg.get("User")
+          env = dict(kv.split("=", 1) for kv in cfg["Env"])
+          for kv in lock["env"]:
+              k, v = kv.split("=", 1)
+              assert env.get(k) == v, k
+          PY
+      - name: playwright (headless Chromium for the browser check)
+        run: |
+          python3 -m venv /tmp/pw
+          /tmp/pw/bin/pip install --quiet playwright==1.52.0
+          /tmp/pw/bin/python -m playwright install --with-deps chromium > /tmp/pw-install.log 2>&1 || { tail -n 50 /tmp/pw-install.log; exit 1; }
+      - name: container smoke (a)–(d)
+        env:
+          PW_PYTHON: /tmp/pw/bin/python
+        run: tests/smoke/run-smoke.sh woow-litellm:ci

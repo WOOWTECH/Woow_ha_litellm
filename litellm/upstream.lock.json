@@ -1,0 +1,350 @@
+{
+  "_comment": "Pins for the Woow LiteLLM image (DESIGN v3.2 \u00a75.2, as changed by the owner on 2026-10-09: private image built directly on the upstream litellm-non_root image, enterprise code kept, nothing pruned). Upstream facts from the M0 SP1 lock (spike/m0-sp1 55792ed); wolfi_apk and s6_overlay from the SP2 desk draft. litellm/Dockerfile must agree with this file (tests/test_config_contract.py).",
+  "image": "ghcr.io/berriai/litellm-non_root",
+  "tag": "1.104.0",
+  "litellm_version": "1.104.0",
+  "litellm_commit": "79645770fedc7ec2627e6468d31062f20f82aecc",
+  "index_digest": "sha256:37066242e6b8327fdd627682a66a9ae2a599553b4d5a84c905c6d8b9eb35c01e",
+  "platforms": {
+    "linux/amd64": {
+      "manifest_digest": "sha256:843a35c72a832e9c062b66111b1aa54e6588fb32c3ab400d3e20ea9c5fa656a0",
+      "config_digest": "sha256:bfbade18821e5fcf7291e148fddf4013711c50f347def2cf9128534de2443cde",
+      "layer_digests": [
+        "sha256:28c972c1431bbe69cb9b16c0f75b357850302e8503212392cc1e00cb26d9e9d0",
+        "sha256:1ac8b6c8dfa75a7ccef181d11762d084be5eeb711110c4310bc01a75efb09ece",
+        "sha256:392fc32e63fc5d1eec0fb45aee855ad4d0fdfa773ba098aaae620700f0ee579a",
+        "sha256:cdb5af441f92fb9a168542c81acb62a5a6a63b24eb0d26c6e67ac37f310d6260",
+        "sha256:0fa0803f038ca5a66da9409bbc4f15d761a755e14264e1bcf5aa1d214aa40ab3",
+        "sha256:0e3a84f7427f59342d7be4787e01fad97fb26e0f084e961d1527e7ed1810a0a5",
+        "sha256:b10d4a946640307a04381e8ff5b3dc262f7332586acb67ba29838d9b1d239cbc",
+        "sha256:ed4725379a22e41b02806192aff768a5e11226d9511b806bf6138e8dfba5f24e",
+        "sha256:076b3195c593899531ca6f7f358e90cc36448cf512445c76144b33dd4011f6a5",
+        "sha256:1707443352f0d5292d1da0dfa2717609c4168dc4555e26adf9453ebed7a31c19",
+        "sha256:b72d96b46af9ec2434a5b80d672c8ed77e554b6dce499c3dcdfbce01c4f205da",
+        "sha256:26fad43e9d15783307a1e3dd39c1b42ac372a7fe6fe2ca99656aec29b374ea2f",
+        "sha256:fedf51e6cc8e644823edcc73bababf16511b3ba195bf38aaa3bd619a6c35fff9",
+        "sha256:ec4c5d34952abaf81bd6d172bb34eaf04bc6d2c987e20d416c0118568a072259",
+        "sha256:46e8a2d18ea6edb87682dcd7817d609fe18fe4989a2e5631ca3805ae187718c5",
+        "sha256:d5494b4835ce0ccd22d3ce9eda41808237fc4f4aa69d58dd407d0369f580a4b5",
+        "sha256:1140cdf69465d05c2270f401c318758f2887d97f30633c6c214292a557de0fd2",
+        "sha256:005a45b0dce2761fca436fba750e7c676f0a5fc03b0dbc99f373a1766bf1d773",
+        "sha256:679ffb6574d2d602040d2e04234196324555ec11ff2cb6e7f457d72d8a0bfb9f",
+        "sha256:3b9b5b7e74a4fab1d797067276366b7c78f1ca838a7944449f66fdcf2c6a9f30",
+        "sha256:644b53e81cd3b9588424a7e46a58415bba8bf050722711053cc4baa1da73fb59",
+        "sha256:b5637e3e6d57ebf92dd9f2626437645168905fe5c735cac2fd8a22c61a86947c",
+        "sha256:39cc23e24bac4d5616b05d491d484b273b7b5805667da58263c6490ca1cf1b47",
+        "sha256:dcc021b619afc670d5d17296a870244999755a4a7b8fec7d9ab43f1139a8da7a"
+      ],
+      "layer_diff_ids": [
+        "sha256:b76b7633da4fb071018956f4fb772ea2cad2f1dc9c8c4cd3836ac2bdad8d8dfd",
+        "sha256:475ef483a00b76e33a13c8f19883e9a87b63195382c5c40426007f5753a2327b",
+        "sha256:f853e0b8057a7d575e174a3a93c8cc98c733719fc4ec68b4375cf22bb9187dd2",
+        "sha256:b9165a4cb6cc89b5e8f38241838e6d8168cb246fbd306b527a7922efb2e39f48",
+        "sha256:808bba1f7ed07addaf83d9ec5bd20235ac430948d19cfbfb5cf900c83e35f14c",
+        "sha256:6a0c47c1ef4cef192b0d073f0d6344d30ab6d3765fc927df4fb5bb5a8043fad6",
+        "sha256:1ab0a42ee02036016dadab036eabf4115441fe5a22ec7c5f535665ceec724234",
+        "sha256:6a6e12f0d5f2a1f80023642329d6d372297c032c8d34c5af6810290e0f6df141",
+        "sha256:4d95399cd58979bce74141d44d05fb913fd048a370faaf97ee5ed8f7fe30b051",
+        "sha256:33af4ac33fffe2c4daa323176286fa0f3e1064675bbf032de67a874c6c1e4e09",
+        "sha256:82eee4c8993ae8e63d89b991b9c04c773dd153cbad36002ee383a31fbc0ad8b9",
+        "sha256:f1f89df3ad0742aa2d315cce86dbafcce2f68ed1d77cdcdc273b54838d58292a",
+        "sha256:8be3d8277268dcb2dfd97126dbc97f9d4ede8cc170f98b04d61e7156e63bff52",
+        "sha256:277d24dcf9fb72e8659baa29e87b0e417b16628f2ecebdf1ff08a53f488418bb",
+        "sha256:b4a11d96c2a33a8ea4d45fade3b959b086414d67cb41792a72ca77b8abedb3ac",
+        "sha256:58ec8600350e747ee55514b42fadb3e5d2723a0348f1b09993d7e1bd35053751",
+        "sha256:af099b17da026653a089bb513eb0d5ca4cdbc538cef83b604ba0a98869085cca",
+        "sha256:f1b0007fc58da118a6b8dde232cbaad81c534a8c8f9cb50463ed0b98caa81818",
+        "sha256:5169eef3bd91bbe20948f1b59bee73b19ec75c851692dfbcf649bb959aead0b1",
+        "sha256:474d48dc9b33fdbca69e5ebd7d6d4a76ad7455f0b6d292a166d07ef3b836339d",
+        "sha256:4eb7ff9e2e1c30570bc99480a2f8d8746039159703356dae1215fa506c7886a9",
+        "sha256:0e80ac236d6827510091ae6ac354e9235c975e12c694135268d617b8fd522376",
+        "sha256:78238ce69d6ca58c85c4bf924172acb9b1fa03ed494d9a5633c3dcc5e36e7a0f",
+        "sha256:aec491e8f3938611028ee8cc105bcddf2df3dfd625e49adfa7a3b98c0409a437"
+      ]
+    }
+  },
+  "env": [
+    "PATH=/app/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin",
+    "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt",
+    "PRISMA_BINARY_CACHE_DIR=/opt/prisma/binaries",
+    "PRISMA_CLI_PATH=/opt/prisma/binaries/node_modules/.bin/prisma",
+    "PRISMA_CLI_QUERY_ENGINE_TYPE=binary",
+    "HOME=/app",
+    "LITELLM_NON_ROOT=true",
+    "PRISMA_SKIP_POSTINSTALL_GENERATE=1",
+    "PRISMA_HIDE_UPDATE_MESSAGE=1",
+    "PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1",
+    "PRISMA_OFFLINE_MODE=true"
+  ],
+  "env_overrides": {},
+  "wolfi_signing_key_sha256": "f0031424cf46f7db780ce63a45f0fd6aa6f85f601e6bb3b7a91fe3d4d5b7d2cc",
+  "wolfi_repository": "https://packages.wolfi.dev/os",
+  "cosign_pub": {
+    "path": "third_party/berriai-cosign.pub",
+    "source": "https://raw.githubusercontent.com/BerriAI/litellm/0112e53046018d726492c814b3644b7d376029d0/cosign.pub",
+    "sha256": "ff8869bf14ba9d10af7b64b9d479543b44daec0165e715753c43ff8a998f6dd3"
+  },
+  "wolfi_apk": {
+    "apkindex": {
+      "url": "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz",
+      "fetched_at": "2026-10-09T14:26:41Z",
+      "sha256": "33540df7381f66d8d63b94f112cd60f611a0e996081abb3a6714996a87c5b8dc"
+    },
+    "apk_add": [
+      {
+        "name": "postgresql-18",
+        "version": "18.6-r5",
+        "checksum": "Q1oUCgyl6lz5Z7CenW09B+5agmQxQ=",
+        "role": "direct"
+      },
+      {
+        "name": "postgresql-18-client",
+        "version": "18.6-r5",
+        "checksum": "Q1L0DaHVBMLS3sMfOU0N8lbbwPVZE=",
+        "role": "direct"
+      },
+      {
+        "name": "nginx-mainline",
+        "version": "1.31.6-r3",
+        "checksum": "Q1THuuSj4qd8bKYKZYFAz4NShwz2g=",
+        "role": "direct"
+      },
+      {
+        "name": "curl",
+        "version": "8.22.0-r4",
+        "checksum": "Q1aQJ3dlzjLjSkDTTA/4vv2WSn/s0=",
+        "role": "direct"
+      },
+      {
+        "name": "jq",
+        "version": "1.8.2-r3",
+        "checksum": "Q1cIjjnzqrowWo6jY/D8dmbkQ8mdk=",
+        "role": "direct"
+      },
+      {
+        "name": "nginx-mainline-config",
+        "version": "1.31.6-r3",
+        "checksum": "Q1stkCpIgGELhbzBB4GRuNpj8jqho=",
+        "role": "provider-pin",
+        "provides_for": "nginx-config"
+      },
+      {
+        "name": "libLLVM-19",
+        "version": "19.1.7-r28",
+        "checksum": "Q1T64gFKsTT45l1h9xSwv6IRdDHRU=",
+        "role": "provider-pin",
+        "provides_for": "so:libLLVM.so.19.1"
+      },
+      {
+        "name": "libldap-2.7",
+        "version": "2.7.1-r2",
+        "checksum": "Q1gyG4NFMkYf1asL0BoNB+mLjn3go=",
+        "role": "provider-pin",
+        "provides_for": "so:libldap.so.2"
+      },
+      {
+        "name": "libxml2-16",
+        "version": "2.15.4-r0",
+        "checksum": "Q1haxy2QdSeOuUY03tBWDsWimKjhQ=",
+        "role": "provider-pin",
+        "provides_for": "so:libxml2.so.16"
+      },
+      {
+        "name": "cyrus-sasl-heimdal-libs",
+        "version": "2.1.28-r58",
+        "checksum": "Q1DC9Yw4pMVRzfDpC3daQYzbX25Mw=",
+        "role": "dependency"
+      },
+      {
+        "name": "ecpg-18",
+        "version": "18.6-r5",
+        "checksum": "Q1HYk0BhIoZ6ZXexbMLOTFRAzOcgk=",
+        "role": "dependency"
+      },
+      {
+        "name": "heimdal-libs",
+        "version": "7.8.0-r52",
+        "checksum": "Q14CulF+8IM4nJLeafxIjPpxcrwtk=",
+        "role": "dependency"
+      },
+      {
+        "name": "keyutils-libs",
+        "version": "1.6.3-r40",
+        "checksum": "Q17Ib+Sgj8GeUCqHTq0wsP2X8Qeho=",
+        "role": "dependency"
+      },
+      {
+        "name": "krb5-conf",
+        "version": "1.0-r10",
+        "checksum": "Q1+nzcG33MVDgV7NxwDXA6r0h6j14=",
+        "role": "dependency"
+      },
+      {
+        "name": "krb5-libs",
+        "version": "1.22.2-r5",
+        "checksum": "Q1gZY9KeWPIWMl4XhKlmOtDt+EYLQ=",
+        "role": "dependency"
+      },
+      {
+        "name": "libcom_err",
+        "version": "1.47.4-r2",
+        "checksum": "Q1q87/5ubP7AO2yoLPxwfezzwYa2o=",
+        "role": "dependency"
+      },
+      {
+        "name": "libcurl-openssl4",
+        "version": "8.22.0-r4",
+        "checksum": "Q1wzjLvFA57OiEjEOZEEkyNz2SDsA=",
+        "role": "dependency"
+      },
+      {
+        "name": "libedit",
+        "version": "3.1-r19",
+        "checksum": "Q1vssdLVUenm5j19fgW6o3byXh9t0=",
+        "role": "dependency"
+      },
+      {
+        "name": "libidn2",
+        "version": "2.3.8-r9",
+        "checksum": "Q1ynJi29iMu9TbB0e2QAdY9rbASkQ=",
+        "role": "dependency"
+      },
+      {
+        "name": "liblz4-1",
+        "version": "1.10.0-r10",
+        "checksum": "Q1727w379PBHcge0BrKB64+RPDnj4=",
+        "role": "dependency"
+      },
+      {
+        "name": "libpcre2-8-0",
+        "version": "10.49-r1",
+        "checksum": "Q1E4AUcoiBlrrXlERl3QkBFhs2lMQ=",
+        "role": "dependency"
+      },
+      {
+        "name": "libpq-18",
+        "version": "18.6-r5",
+        "checksum": "Q1V7e69eX0zzvPtL4S1JsMTEqgvL0=",
+        "role": "dependency"
+      },
+      {
+        "name": "libpsl",
+        "version": "0.23.3-r1",
+        "checksum": "Q1S3QSVie4zk/T+lrR7MI9b11QvuY=",
+        "role": "dependency"
+      },
+      {
+        "name": "libselinux",
+        "version": "3.11-r2",
+        "checksum": "Q1bgELvhZkvmm6TLhOGi+9kCHCqMo=",
+        "role": "dependency"
+      },
+      {
+        "name": "libsepol",
+        "version": "3.11-r3",
+        "checksum": "Q1T5zgKf3vricxqHlnWi3pCmqmbMI=",
+        "role": "dependency"
+      },
+      {
+        "name": "libunistring",
+        "version": "1.4.2-r3",
+        "checksum": "Q1VnLE/CEBGrPE9lkOJX/gABvZliI=",
+        "role": "dependency"
+      },
+      {
+        "name": "libverto",
+        "version": "0.3.2-r8",
+        "checksum": "Q1pfE3lj+GSZzzjQRR73pjIKulwXY=",
+        "role": "dependency"
+      },
+      {
+        "name": "libzstd1",
+        "version": "1.5.7-r10",
+        "checksum": "Q19gFljHREFrRAG5xjzxB9UzRCS2o=",
+        "role": "dependency"
+      },
+      {
+        "name": "linux-pam",
+        "version": "1.7.3-r0",
+        "checksum": "Q1HHbtm+hhwEl52V2snMb7o76ozWw=",
+        "role": "dependency"
+      },
+      {
+        "name": "nghttp3",
+        "version": "1.18.0-r1",
+        "checksum": "Q1vRUA9JlgKHJEdBopTzJLUJ3Zaa8=",
+        "role": "dependency"
+      },
+      {
+        "name": "nginx-mainline-fastcgi-params",
+        "version": "1.31.6-r3",
+        "checksum": "Q1tEl2mtgW1aAJlECfSt8j0e9oTYM=",
+        "role": "dependency"
+      },
+      {
+        "name": "nginx-mainline-mime-types",
+        "version": "1.31.6-r3",
+        "checksum": "Q17VwMoiRHvyy+XrfPhXa4/eDpOnE=",
+        "role": "dependency"
+      },
+      {
+        "name": "nginx-mainline-scgi-params",
+        "version": "1.31.6-r3",
+        "checksum": "Q1n6GqWaKPCtwkxv6V/1rpCYKGF2k=",
+        "role": "dependency"
+      },
+      {
+        "name": "nginx-mainline-uwsgi-params",
+        "version": "1.31.6-r3",
+        "checksum": "Q1SXk3/Gar+4qpoer95B2xR0R/DzI=",
+        "role": "dependency"
+      },
+      {
+        "name": "ngtcp2",
+        "version": "1.25.0-r5",
+        "checksum": "Q1Hh7vkmdczpC3oumz0naTz8nLZ0A=",
+        "role": "dependency"
+      },
+      {
+        "name": "oniguruma",
+        "version": "6.9.10-r5",
+        "checksum": "Q1pOjsFSXbw5VfRdOIYMw1ZF51mtI=",
+        "role": "dependency"
+      },
+      {
+        "name": "postgresql-18-base",
+        "version": "18.6-r5",
+        "checksum": "Q1gDLEgubgWQPeJAkC0nVoHtIKbNI=",
+        "role": "dependency"
+      },
+      {
+        "name": "postgresql-18-client-base",
+        "version": "18.6-r5",
+        "checksum": "Q1wzQoS5p6nl62CN/rrgz0040esdk=",
+        "role": "dependency"
+      }
+    ]
+  },
+  "s6_overlay": {
+    "version": "v3.2.3.2",
+    "published_at": "2026-07-16T08:25:46Z",
+    "tag_commit": "60b2520427f27af3867ebd8de27c3a3b55346bef",
+    "assets": [
+      {
+        "name": "s6-overlay-noarch.tar.xz",
+        "url": "https://github.com/just-containers/s6-overlay/releases/download/v3.2.3.2/s6-overlay-noarch.tar.xz",
+        "size": 7128,
+        "sha256": "5379750ed30a84bbd2e2dd74847ba6b5bd29cd0b2e3ea2ec58049b57eb2eda12"
+      },
+      {
+        "name": "s6-overlay-x86_64.tar.xz",
+        "url": "https://github.com/just-containers/s6-overlay/releases/download/v3.2.3.2/s6-overlay-x86_64.tar.xz",
+        "size": 730216,
+        "sha256": "e6befcc96a437a3831386ecfc51808c5d3e939dc5fe3c02ae9284599e8aa2408"
+      }
+    ]
+  },
+  "_todo": [
+    "apk add --simulate + installed-set comparison with C: checksums (SP2 \u00a710-2), if wanted for the private image"
+  ]
+}

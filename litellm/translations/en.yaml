@@ -1,0 +1,59 @@
+configuration:
+  master_key:
+    name: Master key
+    description: >-
+      Leave empty to keep the stored key (generated on the first start and, on Home Assistant
+      2026.5.0+ with Supervisor 2026.07.0+, written back here once). Clearing this field after the
+      write-back does not change the key and it is not written back again. To change it, enter a new
+      sk-… value and restart: every admin UI session is signed out. Give other add-ons on this Home
+      Assistant a LiteLLM virtual key, never this one.
+  ui_username:
+    name: Admin UI username
+    description: Username for the LiteLLM admin UI sign-in.
+  ui_password:
+    name: Admin UI password
+    description: >-
+      Leave empty to keep the stored password (generated on the first start and written back here
+      once, like the master key). At least 12 characters. Changing it and restarting signs out every
+      admin UI session.
+  ui_session_duration:
+    name: Admin UI session length
+    description: How long an admin UI sign-in lasts, 1h to 24h (default 4h).
+  log_level:
+    name: Log level
+    description: >-
+      error or warning. Request URLs are never logged. For debugging, set LITELLM_LOG in env_vars at
+      your own risk.
+  spend_logs_retention:
+    name: Usage log retention
+    description: How long request usage (spend) logs are kept, e.g. 30d or 12h (default 30d).
+  spend_logs_cleanup_cron:
+    name: Usage log cleanup time
+    description: >-
+      Cron schedule of the usage log cleanup, in the Home Assistant time zone (default 03:30 every day).
+      Keep it away from the time of the automatic Home Assistant backups. For weekdays use mon, sun, …
+      (not numbers).
+  password_breach_check:
+    name: Check passwords against known breaches
+    description: >-
+      LiteLLM checks the passwords of admin UI database users against Have I Been Pwned (k-anonymity:
+      only a hash prefix leaves Home Assistant). The env sign-in above is never checked.
+  chatgpt_subscription:
+    name: ChatGPT subscription
+    description: >-
+      Let LiteLLM use the allowance of ChatGPT Plus / Pro subscriptions (the same feature as on WOOW
+      PaaS). Turning it off does not delete connected accounts; disconnect them on the ChatGPT
+      subscription page first. The same ChatGPT account may sign in here and on PaaS separately, but
+      do not restore this add-on's backup on a second host and keep using both.
+  api_docs:
+    name: API docs
+    description: >-
+      Serve /docs and the other API documentation pages. Off by default: every add-on on this Home
+      Assistant can reach port 4000, and the pages make the API easier to probe.
+  env_vars:
+    name: Environment variables
+    description: >-
+      Extra environment variables for LiteLLM. Variables the add-on sets itself (keys, database,
+      paths, the ChatGPT plugin, S6_, PRISMA_ …) are refused.
+network:
+  4000/tcp: LiteLLM API and admin UI (HTTP on the LAN; use Cloudflare Tunnel for HTTPS). Off by default.

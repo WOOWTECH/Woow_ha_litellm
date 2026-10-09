@@ -1,0 +1,4 @@
+#!/bin/sh
+# As litellm over TCP: the server answers with its SCRAM challenge and pg_isready stops there, so a
+# probe neither needs a password nor leaves a "pg_hba.conf rejects connection" line in the log.
+exec /usr/bin/pg_isready -q -h 127.0.0.1 -p 5432 -U litellm -d litellm -t 2

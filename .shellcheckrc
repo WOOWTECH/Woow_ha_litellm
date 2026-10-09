@@ -1,0 +1,2 @@
+# The s6 scripts source /usr/local/lib/woow-litellm/common.sh, an absolute path inside the image.
+disable=SC1091

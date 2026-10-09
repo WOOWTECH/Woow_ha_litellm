@@ -1,0 +1,27 @@
+#!/bin/sh
+# woow-revoke-ui-sessions (DESIGN §7.1, §8.1, §8.5): a new master key or UI password deletes every
+# admin-UI session key (team litellm-dashboard) before LiteLLM starts: a JWT signed with the old
+# master key dies with it, but the PROXY_ADMIN key inside it would not.
+set -eu
+export WOOW_STEP=woow-revoke-ui-sessions
+. /usr/local/lib/woow-litellm/common.sh
+cd /
+
+r="$(woow_init revoke-check)"
+case "$r" in
+  fresh)
+    woow_init revoke-record
+    log "first start: credential fingerprints recorded"
+    ;;
+  unchanged)
+    log "master key and UI password unchanged"
+    ;;
+  changed:*)
+    n="$(psql_su -d litellm -c "WITH d AS (DELETE FROM \"LiteLLM_VerificationToken\" WHERE team_id = 'litellm-dashboard' RETURNING 1) SELECT count(*) FROM d")"
+    woow_init revoke-record
+    log "${r#changed:} changed: revoked $n admin UI session key(s)"
+    ;;
+  *)
+    fatal "could not compare the credential fingerprints"
+    ;;
+esac

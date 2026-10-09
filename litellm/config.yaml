@@ -1,0 +1,59 @@
+name: Woow LiteLLM
+version: 0.1.0
+slug: woow-litellm
+description: LiteLLM AI gateway (OpenAI-compatible) with built-in PostgreSQL
+url: https://github.com/WOOWTECH/Woow_ha_litellm
+# Prebuilt by .github/workflows/publish-litellm-addon-images.yml. Never built on Home Assistant.
+image: ghcr.io/woowtech/woow-ha-litellm-{arch}
+arch:
+  - amd64 # aarch64 in a later release (D-11 a)
+stage: experimental
+homeassistant: 2026.5.0 # only for D-09 (a): older Core lets non-admin users read add-on options
+init: false # s6-overlay v3 must be PID 1
+startup: application
+boot: auto
+timeout: 120 # LiteLLM 20 s graceful + PostgreSQL fast shutdown (DESIGN §7.7)
+hassio_api: false # /info, /addons/self/info and /addons/self/options are API-bypass paths
+homeassistant_api: false
+auth_api: false
+docker_api: false
+host_network: false
+apparmor: true
+ingress: true
+ingress_port: 8099
+ingress_stream: true
+panel_icon: mdi:transit-connection-variant
+panel_title: LiteLLM
+panel_admin: true
+ports:
+  4000/tcp: null # off by default; add-ons reach http://<hostname>:4000 on the internal network
+ports_description:
+  4000/tcp: LiteLLM API and admin UI (HTTP for LAN; use Cloudflare Tunnel for HTTPS)
+webui: "http://[HOST]:[PORT:4000]/" # "/" redirects to the prefixed admin UI; a bare /ui is 404 by design
+backup: cold
+backup_exclude:
+  - "**/pre-upgrade-dumps" # never exclude pg_wal
+options:
+  ui_username: admin
+  ui_session_duration: 4h
+  log_level: warning
+  spend_logs_retention: 30d
+  spend_logs_cleanup_cron: "30 3 * * *"
+  password_breach_check: true
+  chatgpt_subscription: true
+  api_docs: false
+  env_vars: []
+schema:
+  master_key: password?
+  ui_username: match(^[A-Za-z0-9_.@-]{1,64}$)
+  ui_password: password?
+  ui_session_duration: match(^([1-9]|1[0-9]|2[0-4])h$)
+  log_level: list(error|warning)
+  spend_logs_retention: match(^[1-9][0-9]{0,3}[dh]$)
+  spend_logs_cleanup_cron: match(^[0-9a-z*/,-]+( [0-9a-z*/,-]+){4}$)
+  password_breach_check: bool
+  chatgpt_subscription: bool
+  api_docs: bool
+  env_vars:
+    - key: match(^[A-Z][A-Z0-9_]*$)
+      value: str

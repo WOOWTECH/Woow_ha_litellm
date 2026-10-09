@@ -1,0 +1,81 @@
+# Woow LiteLLM add-on: HA sidebar (Ingress) → LiteLLM admin UI (DESIGN v3.2 §8.3).
+# Rendered at boot by init-woow-supervisor; @INGRESS_ENTRY@ is the Supervisor's ingress_entry,
+# validated against ^/api/hassio_ingress/[A-Za-z0-9_-]{16,128}$ — never taken from a request header.
+
+# LiteLLM answers every response with X-Frame-Options: DENY and CSP frame-ancestors 'none'; the HA
+# frontend shows add-ons in an iframe of the same origin. Only these two exact values change, on
+# this port only; anything else (e.g. the plugin page's own SAMEORIGIN / 'self') passes unchanged.
+map $upstream_http_x_frame_options $woow_frame_options {
+    default    $upstream_http_x_frame_options;
+    "~*^deny$" "SAMEORIGIN";
+}
+map $upstream_http_content_security_policy $woow_csp {
+    default                  $upstream_http_content_security_policy;
+    "frame-ancestors 'none'" "frame-ancestors 'self'";
+}
+map $http_upgrade $woow_connection {
+    default upgrade;
+    ""      "";
+}
+
+server {
+    listen 8099 default_server;
+    server_name _;
+
+    # Only the Supervisor's Ingress proxy may connect. Checked on the connection address: realip
+    # (below) rewrites $remote_addr to the browser's, so allow/deny would see the wrong address.
+    if ($realip_remote_addr != "172.30.32.2") {
+        return 403;
+    }
+    # Browser address: HA Core appends the browser to X-Forwarded-For, the Supervisor appends Core.
+    set_real_ip_from 172.30.32.1;
+    set_real_ip_from 172.30.32.2;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    absolute_redirect off;
+    client_max_body_size 64m;
+
+    location = / {
+        return 302 ui/;
+    }
+
+    location / {
+        # The Supervisor strips the prefix; LiteLLM (SERVER_ROOT_PATH = the same prefix) serves /ui
+        # and /_next only WITH it, so it is put back. $request_uri is forwarded as received (no
+        # decode/re-encode: names with %2F or %20 stay intact).
+        proxy_pass http://127.0.0.1:4000@INGRESS_ENTRY@$request_uri;
+        proxy_http_version 1.1;
+        # The browser's Host and the X-Forwarded-Proto / X-Ingress-Path sent by HA pass through
+        # unchanged: the login redirect, the cookie's Secure flag and the plugin's URLs use them.
+        proxy_set_header Host $http_host;
+        # Only the browser address (realip), never a chain the browser could have started.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $woow_connection;
+        # Server-set cookies (Path=/) stay under this add-on's prefix.
+        proxy_cookie_path ~^/$ @INGRESS_ENTRY@/;
+        # Absolute redirects: drop scheme and host, keep the (already prefixed) path. Never
+        # `proxy_redirect default`: with a prefixed proxy_pass it would strip the prefix too.
+        proxy_redirect ~^https?://[^/]+(/.*)$ $1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_intercept_errors off;
+        proxy_hide_header X-Frame-Options;
+        proxy_hide_header Content-Security-Policy;
+        add_header X-Frame-Options $woow_frame_options always;
+        add_header Content-Security-Policy $woow_csp always;
+        # Only nginx's own 502 (LiteLLM not listening yet) becomes the "starting" page; LiteLLM's
+        # own 502/503/504 answers pass unchanged (proxy_intercept_errors off).
+        error_page 502 = @starting;
+    }
+
+    location @starting {
+        default_type text/html;
+        add_header Cache-Control "no-store" always;
+        add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'" always;
+        return 503 '<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta http-equiv="refresh" content="10"><title>LiteLLM 啟動中</title><style>body{font-family:system-ui,sans-serif;margin:3rem;color:#333}</style></head><body><h1>LiteLLM 啟動中…</h1><p>第一次啟動或升級後要套用資料庫 migration，可能需要幾分鐘。本頁每 10 秒自動重新整理。</p><p>LiteLLM is starting (database migrations on the first start can take a few minutes). This page reloads every 10 seconds.</p></body></html>';
+    }
+}
