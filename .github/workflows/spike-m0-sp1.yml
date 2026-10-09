@@ -1,0 +1,288 @@
+# M0 spike SP1 / SP4 / upstream provenance (DESIGN §5.1, §5.3, §5.7, §15).
+#
+# Public repo, public logs. Hard rules for this workflow:
+#   * nothing is pushed to any registry (no login step exists);
+#   * no build cache leaves the runner (no cache-to / cache-from, no type=gha);
+#   * artifacts are text reports only (JSON / TSV listings / our own logs) - never an
+#     image tar, never a layer, never a file copied out of the upstream image;
+#   * the enterprise hash set and the upstream inventory stay in $RUNNER_TEMP/private;
+#   * the only credentials are random per-run values, masked and never echoed.
+name: spike-m0-sp1
+
+on:
+  push:
+    branches: [spike/m0-sp1]
+    paths: ['spike/**', '.github/workflows/spike-m0-sp1.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spike-m0-sp1-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LOCK: spike/upstream.lock.json
+  BUILDKIT_IMAGE: moby/buildkit:v0.33.0
+  BUILDX_NO_DEFAULT_ATTESTATIONS: '1'
+  # Only the spike's flattened base: one layer.
+  EXPECT_LAYERS: '1'
+
+jobs:
+  build-a:
+    name: SP1 build A, static checks, smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          # Throwaway database on a disposable runner; not a secret.
+          POSTGRES_PASSWORD: spike-ephemeral-db
+          POSTGRES_DB: litellm
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d litellm"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Make room on the runner
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h / | tail -1
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver: docker-container
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+
+      - name: Fetch pinned upstream (amd64) into an OCI layout on the runner
+        run: |
+          python3 -I spike/checks/fetch_upstream.py \
+            --repo "$(jq -r .image "$LOCK")" \
+            --index-digest "$(jq -r .index_digest "$LOCK")" \
+            --manifest-digest "$(jq -r '.platforms["linux/amd64"].manifest_digest' "$LOCK")" \
+            --out "$RUNNER_TEMP/upstream"
+
+      - name: Upstream facts (epoch, Env, Wolfi key, enterprise hash set) vs lock
+        id: facts
+        run: |
+          mkdir -p "$RUNNER_TEMP/reports" "$RUNNER_TEMP/private"
+          python3 -I spike/checks/upstream_facts.py "$RUNNER_TEMP/upstream" --lock "$LOCK" \
+            --out "$RUNNER_TEMP/reports" --private "$RUNNER_TEMP/private"
+
+      - name: Build base (FROM scratch flatten), OCI tar on the runner only
+        id: build
+        run: |
+          set -euo pipefail
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
+          mkdir -p "$RUNNER_TEMP/emptyctx"
+          start=$(date +%s)
+          docker buildx build --platform linux/amd64 --target base \
+            --provenance=false --sbom=false --no-cache \
+            --build-arg BUILD_REF=${{ github.sha }} \
+            --output "type=oci,dest=$RUNNER_TEMP/final.oci.tar,name=woow-litellm-spike:sp1,rewrite-timestamp=true,compression=gzip,compatibility-version=30,oci-mediatypes=true" \
+            -f spike/Dockerfile "$RUNNER_TEMP/emptyctx"
+          echo "build seconds: $(( $(date +%s) - start ))"
+          ls -l "$RUNNER_TEMP/final.oci.tar"
+
+      - name: Image report (digests, layer sizes, listings)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          python3 -I spike/checks/image_report.py "$RUNNER_TEMP/final.oci.tar" \
+            --out "$RUNNER_TEMP/reports" --name build-a --epoch "$SOURCE_DATE_EPOCH"
+
+      - name: "Check 1: enterprise content (path + content hashes + license metadata)"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          python3 -I spike/checks/enterprise_content.py "$RUNNER_TEMP/final.oci.tar" \
+            --hashes "$RUNNER_TEMP/private/enterprise-hashes.txt" --summary "$RUNNER_TEMP/reports/check-1-enterprise-content.json"
+
+      - name: "Check 10: per-layer scan (forbidden paths, whiteouts, apk repo/keys, labels, layer count)"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          python3 -I spike/checks/layer_scan.py "$RUNNER_TEMP/final.oci.tar" --lock "$LOCK" \
+            --hashes "$RUNNER_TEMP/private/enterprise-hashes.txt" --expect-layers "$EXPECT_LAYERS" \
+            --summary "$RUNNER_TEMP/reports/check-10-layer-scan.json"
+
+      - name: "Check 9: Env"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          python3 -I spike/checks/env_compare.py "$RUNNER_TEMP/final.oci.tar" --lock "$LOCK" \
+            --upstream-config-facts "$RUNNER_TEMP/reports/upstream-facts.json" --strict-config \
+            --summary "$RUNNER_TEMP/reports/check-9-env.json"
+
+      - name: Flatten fidelity (upstream merged vs final merged)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          python3 -I spike/checks/fidelity.py --upstream "$RUNNER_TEMP/private/upstream-inventory.tsv.gz" \
+            --final "$RUNNER_TEMP/reports/build-a-inventory.tsv.gz" --epoch "$SOURCE_DATE_EPOCH" \
+            --summary "$RUNNER_TEMP/reports/fidelity.json"
+
+      - name: Load the image into the local daemon
+        id: load
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          if out=$(docker load -i "$RUNNER_TEMP/final.oci.tar" 2>&1); then
+            echo "$out"
+          else
+            echo "docker load of the OCI tar failed ($out); exporting type=docker from the same builder"
+            docker buildx build --platform linux/amd64 --target base --provenance=false --sbom=false \
+              --build-arg BUILD_REF=${{ github.sha }} \
+              --output "type=docker,dest=$RUNNER_TEMP/final.docker.tar,name=woow-litellm-spike:sp1,rewrite-timestamp=true,compression=gzip,compatibility-version=30,oci-mediatypes=true" \
+              -f spike/Dockerfile "$RUNNER_TEMP/emptyctx"
+            out=$(docker load -i "$RUNNER_TEMP/final.docker.tar"); echo "$out"
+          fi
+          ref=$(echo "$out" | sed -n 's/^Loaded image: //p; s/^Loaded image ID: //p' | tail -1)
+          echo "image=$ref" >> "$GITHUB_OUTPUT"
+          docker image inspect "$ref" --format 'id={{.Id}} user={{.Config.User}} workdir={{.Config.WorkingDir}} size={{.Size}}'
+
+      - name: "Check 2: unguarded enterprise imports (AST, in the image's Python 3.13)"
+        if: ${{ !cancelled() && steps.load.outcome == 'success' }}
+        run: |
+          chmod 0777 "$RUNNER_TEMP/reports"
+          docker run --rm --network none --user 65534 \
+            -v "$GITHUB_WORKSPACE/spike:/spike:ro" -v "$RUNNER_TEMP/reports:/out" \
+            --entrypoint python "${{ steps.load.outputs.image }}" -I /spike/checks/enterprise_imports.py check \
+            --root site-packages=/app/.venv/lib/python3.13/site-packages --root app=/app --exclude /app/.venv \
+            --fixture /spike/fixtures/enterprise-unguarded.txt --summary /out/check-2-enterprise-imports.json
+
+      - name: "Smoke: import, migrations, health, models, UI login, Responses background"
+        if: ${{ !cancelled() && steps.load.outcome == 'success' }}
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          docker pull -q "$(jq -r .image "$LOCK")@$(jq -r .index_digest "$LOCK")" > /dev/null
+          control="$(jq -r .image "$LOCK")@$(jq -r .index_digest "$LOCK")"
+          export PG_URL_FILE="$RUNNER_TEMP/pg-url"
+          printf 'postgresql://postgres:spike-ephemeral-db@127.0.0.1:5432/litellm' > "$PG_URL_FILE"
+          bash spike/smoke/run_smoke.sh "${{ steps.load.outputs.image }}" "$RUNNER_TEMP/reports/smoke" "$control"
+
+      - name: Summary
+        if: ${{ always() }}
+        run: |
+          python3 -I - "$RUNNER_TEMP/reports" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, os, sys
+          d = sys.argv[1]
+          print("## SP1 build A\n\n| check | result |\n|---|---|")
+          for f in ["check-1-enterprise-content.json", "check-2-enterprise-imports.json", "check-9-env.json",
+                    "check-10-layer-scan.json", "fidelity.json", "smoke/smoke-results.json"]:
+              p = os.path.join(d, f)
+              r = json.load(open(p)).get("result", "?") if os.path.exists(p) else "not run"
+              if f.startswith("check-2") and os.path.exists(p):
+                  j = json.load(open(p)); r = "PASS" if not (j.get("missing_vs_fixture") or j.get("new_vs_fixture") or j.get("problems")) else "FAIL"
+              print(f"| {f} | {r} |")
+          p = os.path.join(d, "build-a.json")
+          if os.path.exists(p):
+              j = json.load(open(p))
+              for l in j["layers"]:
+                  print(f"\nlayer {l['index']}: `{l['digest']}` {l['size']/2**20:.1f} MiB gz / {l['uncompressed_size']/2**20:.1f} MiB, diffID `{l['diff_id']}`")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: sp1-build-a-reports
+          path: ${{ runner.temp }}/reports
+          if-no-files-found: warn
+          retention-days: 30
+
+  build-b:
+    name: SP4 build B (independent runner)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Make room on the runner
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver: docker-container
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+      - name: Fetch pinned upstream
+        run: |
+          python3 -I spike/checks/fetch_upstream.py \
+            --repo "$(jq -r .image "$LOCK")" \
+            --index-digest "$(jq -r .index_digest "$LOCK")" \
+            --manifest-digest "$(jq -r '.platforms["linux/amd64"].manifest_digest' "$LOCK")" \
+            --out "$RUNNER_TEMP/upstream"
+      - name: Upstream facts (sets SOURCE_DATE_EPOCH)
+        run: |
+          mkdir -p "$RUNNER_TEMP/reports" "$RUNNER_TEMP/private"
+          python3 -I spike/checks/upstream_facts.py "$RUNNER_TEMP/upstream" --lock "$LOCK" \
+            --out "$RUNNER_TEMP/private" --private "$RUNNER_TEMP/private"
+      - name: Build base
+        run: |
+          set -euo pipefail
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
+          mkdir -p "$RUNNER_TEMP/emptyctx"
+          docker buildx build --platform linux/amd64 --target base \
+            --provenance=false --sbom=false --no-cache \
+            --build-arg BUILD_REF=${{ github.sha }} \
+            --output "type=oci,dest=$RUNNER_TEMP/final.oci.tar,name=woow-litellm-spike:sp1,rewrite-timestamp=true,compression=gzip,compatibility-version=30,oci-mediatypes=true" \
+            -f spike/Dockerfile "$RUNNER_TEMP/emptyctx"
+      - name: Image report
+        run: |
+          python3 -I spike/checks/image_report.py "$RUNNER_TEMP/final.oci.tar" \
+            --out "$RUNNER_TEMP/reports" --name build-b --epoch "$SOURCE_DATE_EPOCH"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sp4-build-b-reports
+          path: ${{ runner.temp }}/reports
+          retention-days: 30
+
+  repro:
+    name: SP4 compare A vs B
+    needs: [build-a, build-b]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: sp1-build-a-reports
+          path: ${{ runner.temp }}/a
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: sp4-build-b-reports
+          path: ${{ runner.temp }}/b
+      - name: Compare
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          python3 -I spike/checks/repro_compare.py "$RUNNER_TEMP/a" build-a "$RUNNER_TEMP/b" build-b \
+            --summary "$RUNNER_TEMP/out/sp4-repro.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: sp4-repro
+          path: ${{ runner.temp }}/out
+          retention-days: 30
+
+  provenance:
+    name: Upstream signature and provenance (§5.3)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: cosign / crane checks
+        run: bash spike/checks/upstream_provenance.sh "$LOCK" "$RUNNER_TEMP/prov"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: upstream-provenance
+          path: ${{ runner.temp }}/prov
+          retention-days: 30

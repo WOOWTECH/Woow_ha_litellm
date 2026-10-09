@@ -1,0 +1,11 @@
+# Smoke-test LiteLLM config: one model backed by spike/smoke/mock_upstream.py on the
+# runner (the container runs with --network host). The api_key is a placeholder the
+# mock never checks.
+model_list:
+  - model_name: mock-bg
+    litellm_params:
+      model: openai/mock-bg
+      api_base: http://127.0.0.1:18080/v1
+      api_key: sk-mock-placeholder
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
