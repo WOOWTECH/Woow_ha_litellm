@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016  # single-quoted awk/sh programs on purpose
 # Container smoke test of the add-on image on the CI runner (DESIGN v3.2 §12.2), M1 must-haves:
 #   (a) boot A, no SUPERVISOR_TOKEN (local mode): PostgreSQL up, every migration applied, LiteLLM
 #       ready, nginx 8099 serves the help page, http://127.0.0.1:4000/ redirects;
@@ -69,16 +70,21 @@ wait_healthy() { # name, limit seconds → prints seconds
   done
 }
 
-proc_env_names() { # pattern → variable names (never values) of the first matching process
-  local pid
+# /proc/<pid>/environ of another uid needs CAP_SYS_PTRACE, which `docker exec` (root) does not
+# have: read it as the process's own uid instead. Empty output means "could not read" → fail.
+proc_uid() { in_addon awk '/^Uid:/ {print $2}' "/proc/$1/status"; }
+proc_env_names() { # pattern → variable names (never values) of the oldest matching process
+  local pid uid
   pid="$(in_addon pgrep -o -f "$1" || true)"
   [ -n "$pid" ] || return 1
-  in_addon sh -c "tr '\\0' '\\n' < /proc/$pid/environ | cut -d= -f1"
+  uid="$(proc_uid "$pid")"
+  docker exec -u "$uid" "$CUR" sh -c "tr '\\0' '\\n' < /proc/$pid/environ | cut -d= -f1"
 }
 proc_env_value() { # pattern, variable → value (only for non-secret variables)
-  local pid
+  local pid uid
   pid="$(in_addon pgrep -o -f "$1")"
-  in_addon sh -c "tr '\\0' '\\n' < /proc/$pid/environ | sed -n 's/^$2=//p'"
+  uid="$(proc_uid "$pid")"
+  docker exec -u "$uid" "$CUR" sh -c "tr '\\0' '\\n' < /proc/$pid/environ | sed -n 's/^$2=//p'"
 }
 
 docker network create --subnet 172.30.32.0/23 --gateway 172.30.32.1 "$NET" >/dev/null
@@ -126,8 +132,10 @@ group "processes and environment (boot A)"
 in_addon ps -o user,pid,args | grep -E 'postgres -D|bin/litellm|nginx' | grep -v grep || true
 req "a/LiteLLM runs as nobody (65534)" sh -c "docker exec $CUR ps -o user,args | grep -E '[b]in/litellm' | grep -q '^nobody'"
 req "a/PostgreSQL runs as postgres" sh -c "docker exec $CUR ps -o user,args | grep -E '[p]ostgres -D' | grep -q '^postgres'"
-req "a/nginx workers run as woow-nginx" sh -c "docker exec $CUR ps -o user,args | grep -E '[n]ginx: worker' | grep -q '^woow-nginx'"
-LENV="$(proc_env_names '/app/.venv/bin/litellm')"
+WORKER="$(in_addon pgrep -n -f 'nginx: worker' || true)"
+req "a/nginx workers run as uid 101 (woow-nginx), not the LiteLLM uid" test "$(proc_uid "${WORKER:-0}" 2>/dev/null)" = 101
+LENV="$(proc_env_names '/app/.venv/bin/litellm' || true)"
+req "a/litellm env readable for the checks" test -n "$LENV"
 req "a/litellm env has PYTHONPATH (plugin on), SSL_CERT_FILE, TZ" sh -c "printf '%s\n' \"\$1\" | grep -qx PYTHONPATH && printf '%s\n' \"\$1\" | grep -qx SSL_CERT_FILE && printf '%s\n' \"\$1\" | grep -qx TZ" _ "$LENV"
 req "a/litellm FORWARDED_ALLOW_IPS=127.0.0.1" test "$(proc_env_value '/app/.venv/bin/litellm' FORWARDED_ALLOW_IPS)" = 127.0.0.1
 req "a/litellm has no SERVER_ROOT_PATH in local mode" sh -c "! printf '%s\n' \"\$1\" | grep -qx SERVER_ROOT_PATH" _ "$LENV"
@@ -185,7 +193,8 @@ LENV="$(proc_env_names '/app/.venv/bin/litellm')"
 req "b/litellm has SERVER_ROOT_PATH = ingress_entry" test "$(proc_env_value '/app/.venv/bin/litellm' SERVER_ROOT_PATH)" = "$ENTRY"
 for pat in '/app/.venv/bin/litellm' 'postgres -D' 'nginx: master'; do
   NAMES="$(proc_env_names "$pat" || true)"
-  req "b/no SUPERVISOR_TOKEN in the environment of '$pat'" sh -c "! printf '%s\n' \"\$1\" | grep -qE '^(SUPERVISOR_TOKEN|HASSIO_TOKEN)$'" _ "$NAMES"
+  req "b/no SUPERVISOR_TOKEN in the environment of '$pat' ($(printf '%s\n' "$NAMES" | grep -c .) variables read)" \
+    sh -c '[ -n "$1" ] && ! printf "%s\n" "$1" | grep -qE "^(SUPERVISOR_TOKEN|HASSIO_TOKEN)$"' _ "$NAMES"
 done
 req "b/token removed from the s6 container environment" sh -c "! docker exec $CUR ls /run/s6/container_environment | grep -qE '^(SUPERVISOR_TOKEN|HASSIO_TOKEN)$'"
 req "b/UI files rewritten: no /litellm-asset-prefix left" sh -c "! docker exec $CUR grep -rIl /litellm-asset-prefix /var/lib/litellm/ui | grep -q ."

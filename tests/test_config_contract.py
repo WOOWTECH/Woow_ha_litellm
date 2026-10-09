@@ -121,25 +121,25 @@ def test_dockerfile_stages():
 
 
 def test_dockerfile_upstream_digest_matches_lock():
-    ref = f"{LOCK['litellm']['image']}:{LOCK['litellm']['tag']}@{LOCK['litellm']['index_digest']}"
+    ref = f"{LOCK['image']}:{LOCK['tag']}@{LOCK['index_digest']}"
     assert f"ARG LITELLM_IMAGE={ref}" in DOCKERFILE
-    amd64 = LOCK["litellm"]["platforms"]["linux/amd64"]["manifest_digest"]
+    amd64 = LOCK["platforms"]["linux/amd64"]["manifest_digest"]
     assert f"io.woowtech.litellm.digest={amd64}" in DOCKERFILE
-    assert f"io.woowtech.litellm.version={LOCK['litellm']['version']}" in DOCKERFILE
+    assert f"io.woowtech.litellm.version={LOCK['litellm_version']}" in DOCKERFILE
 
 
 def test_dockerfile_prunes_enterprise_and_chainguard():
     for path in ("/app/enterprise", "litellm_enterprise", "/usr/local/bin/pgbouncer", "/etc/apko.json",
                  "/etc/apk/keys/chainguard-*.rsa.pub", "/var/lib/db/sbom"):
         assert path in DOCKERFILE
-    assert f"ARG WOLFI_SIGNING_KEY_SHA256={LOCK['wolfi']['signing_key_sha256']}" in DOCKERFILE
-    assert f"ARG WOLFI_REPOSITORY={LOCK['wolfi']['repository']}" in DOCKERFILE
+    assert f"ARG WOLFI_SIGNING_PUB_SHA256={LOCK['wolfi_signing_key_sha256']}" in DOCKERFILE
+    assert f"ARG WOLFI_REPOSITORY={LOCK['wolfi_repository']}" in DOCKERFILE
 
 
 def test_dockerfile_apk_pins_equal_lock():
     run = next(ln for ln in dockerfile_instructions() if ln.startswith("RUN apk add"))
     pins = re.findall(r"([A-Za-z0-9_.+-]+=[0-9][A-Za-z0-9_.+-]*-r[0-9]+)", run.split("&&")[0])
-    want = [f"{p['name']}={p['version']}" for p in LOCK["wolfi"]["apk_add"]]
+    want = [f"{p['name']}={p['version']}" for p in LOCK["wolfi_apk"]["apk_add"]]
     assert pins == want
     assert len(want) == 38
     assert "rm -rf /var/lib/db/sbom" in run, "the new packages' SBOMs must not reach a layer"
@@ -152,16 +152,25 @@ def test_dockerfile_s6_overlay_checksums_equal_lock():
         assert any(f"--checksum=sha256:{asset['sha256']}" in ln and asset["url"] in ln for ln in adds), asset["name"]
 
 
+def test_lock_cosign_key_and_fixture():
+    pub = REPO / LOCK["cosign_pub"]["path"]
+    assert hashlib.sha256(pub.read_bytes()).hexdigest() == LOCK["cosign_pub"]["sha256"]
+    rows = [ln for ln in (REPO / "tests/fixtures/enterprise-unguarded.txt").read_text().splitlines()
+            if ln and not ln.startswith("#")]
+    assert len(rows) == 14 and sum(r.endswith("\terror") for r in rows) == 1
+    assert LOCK["source_date_epoch"] == 1791063324
+
+
 def test_dockerfile_env_restates_upstream_env():
     joined = re.sub(r"\\\n\s*", " ", DOCKERFILE)
     envs = " ".join(ln for ln in joined.splitlines() if ln.startswith("ENV "))
-    for kv in LOCK["upstream_env"]:
+    for kv in LOCK["env"]:
         assert kv in envs.split(), kv
     for kv in ("CHECKPOINT_DISABLE=1", "S6_BEHAVIOUR_IF_STAGE2_FAILS=2", "S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0",
                "S6_KILL_GRACETIME=10000"):
         assert kv in envs.split()
     shipped = [ln for ln in (SHARE / "upstream.env").read_text().splitlines() if ln and not ln.startswith("#")]
-    assert shipped == LOCK["upstream_env"]
+    assert shipped == LOCK["env"]
 
 
 def test_dockerfile_accounts():

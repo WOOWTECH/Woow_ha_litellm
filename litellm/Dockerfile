@@ -15,7 +15,7 @@ FROM ${LITELLM_IMAGE} AS upstream
 # buildx --platform linux/amd64 resolves the index to sha256:843a35c72a832e9c062b66111b1aa54e6588fb32c3ab400d3e20ea9c5fa656a0.
 
 FROM upstream AS pruned
-ARG WOLFI_SIGNING_KEY_SHA256=f0031424cf46f7db780ce63a45f0fd6aa6f85f601e6bb3b7a91fe3d4d5b7d2cc
+ARG WOLFI_SIGNING_PUB_SHA256=f0031424cf46f7db780ce63a45f0fd6aa6f85f601e6bb3b7a91fe3d4d5b7d2cc
 ARG WOLFI_REPOSITORY=https://packages.wolfi.dev/os
 # Upstream ends with USER 65534; deleting needs root. This stage is never exported or pushed.
 USER root
@@ -31,7 +31,7 @@ RUN set -eu; \
     rm -rf /app/enterprise "$sp/litellm_enterprise" "$sp"/litellm_enterprise-*.dist-info /var/lib/db/sbom; \
     rm -f /usr/local/bin/pgbouncer /etc/apko.json /etc/apk/keys/chainguard-*.rsa.pub; \
     printf '%s\n' "$WOLFI_REPOSITORY" > /etc/apk/repositories; \
-    echo "$WOLFI_SIGNING_KEY_SHA256  /etc/apk/keys/wolfi-signing.rsa.pub" | sha256sum -c -; \
+    echo "$WOLFI_SIGNING_PUB_SHA256  /etc/apk/keys/wolfi-signing.rsa.pub" | sha256sum -c -; \
     test "$(ls -A /etc/apk/keys)" = "wolfi-signing.rsa.pub"
 
 # s6-overlay v3.2.3.2 tarballs, checked by sha256 (lock: s6_overlay). Only bind-mounted below,

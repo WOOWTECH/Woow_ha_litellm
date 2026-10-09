@@ -1,71 +1,69 @@
 {
-  "_comment": "Pins for the Woow LiteLLM image (DESIGN v3.2 \u00a75.2). M1 core: upstream image facts from the SP1 spike lock, Wolfi apk closure and s6-overlay from the SP2 desk draft (2026-10-09). The Dockerfile must agree with this file (tests/test_config_contract.py). Supply-chain fields still open are listed in _todo.",
-  "litellm": {
-    "version": "1.104.0",
-    "image": "ghcr.io/berriai/litellm-non_root",
-    "tag": "1.104.0",
-    "commit": "79645770fedc7ec2627e6468d31062f20f82aecc",
-    "index_digest": "sha256:37066242e6b8327fdd627682a66a9ae2a599553b4d5a84c905c6d8b9eb35c01e",
-    "platforms": {
-      "linux/amd64": {
-        "manifest_digest": "sha256:843a35c72a832e9c062b66111b1aa54e6588fb32c3ab400d3e20ea9c5fa656a0",
-        "config_digest": "sha256:bfbade18821e5fcf7291e148fddf4013711c50f347def2cf9128534de2443cde",
-        "layer_digests": [
-          "sha256:28c972c1431bbe69cb9b16c0f75b357850302e8503212392cc1e00cb26d9e9d0",
-          "sha256:1ac8b6c8dfa75a7ccef181d11762d084be5eeb711110c4310bc01a75efb09ece",
-          "sha256:392fc32e63fc5d1eec0fb45aee855ad4d0fdfa773ba098aaae620700f0ee579a",
-          "sha256:cdb5af441f92fb9a168542c81acb62a5a6a63b24eb0d26c6e67ac37f310d6260",
-          "sha256:0fa0803f038ca5a66da9409bbc4f15d761a755e14264e1bcf5aa1d214aa40ab3",
-          "sha256:0e3a84f7427f59342d7be4787e01fad97fb26e0f084e961d1527e7ed1810a0a5",
-          "sha256:b10d4a946640307a04381e8ff5b3dc262f7332586acb67ba29838d9b1d239cbc",
-          "sha256:ed4725379a22e41b02806192aff768a5e11226d9511b806bf6138e8dfba5f24e",
-          "sha256:076b3195c593899531ca6f7f358e90cc36448cf512445c76144b33dd4011f6a5",
-          "sha256:1707443352f0d5292d1da0dfa2717609c4168dc4555e26adf9453ebed7a31c19",
-          "sha256:b72d96b46af9ec2434a5b80d672c8ed77e554b6dce499c3dcdfbce01c4f205da",
-          "sha256:26fad43e9d15783307a1e3dd39c1b42ac372a7fe6fe2ca99656aec29b374ea2f",
-          "sha256:fedf51e6cc8e644823edcc73bababf16511b3ba195bf38aaa3bd619a6c35fff9",
-          "sha256:ec4c5d34952abaf81bd6d172bb34eaf04bc6d2c987e20d416c0118568a072259",
-          "sha256:46e8a2d18ea6edb87682dcd7817d609fe18fe4989a2e5631ca3805ae187718c5",
-          "sha256:d5494b4835ce0ccd22d3ce9eda41808237fc4f4aa69d58dd407d0369f580a4b5",
-          "sha256:1140cdf69465d05c2270f401c318758f2887d97f30633c6c214292a557de0fd2",
-          "sha256:005a45b0dce2761fca436fba750e7c676f0a5fc03b0dbc99f373a1766bf1d773",
-          "sha256:679ffb6574d2d602040d2e04234196324555ec11ff2cb6e7f457d72d8a0bfb9f",
-          "sha256:3b9b5b7e74a4fab1d797067276366b7c78f1ca838a7944449f66fdcf2c6a9f30",
-          "sha256:644b53e81cd3b9588424a7e46a58415bba8bf050722711053cc4baa1da73fb59",
-          "sha256:b5637e3e6d57ebf92dd9f2626437645168905fe5c735cac2fd8a22c61a86947c",
-          "sha256:39cc23e24bac4d5616b05d491d484b273b7b5805667da58263c6490ca1cf1b47",
-          "sha256:dcc021b619afc670d5d17296a870244999755a4a7b8fec7d9ab43f1139a8da7a"
-        ],
-        "layer_diff_ids": [
-          "sha256:b76b7633da4fb071018956f4fb772ea2cad2f1dc9c8c4cd3836ac2bdad8d8dfd",
-          "sha256:475ef483a00b76e33a13c8f19883e9a87b63195382c5c40426007f5753a2327b",
-          "sha256:f853e0b8057a7d575e174a3a93c8cc98c733719fc4ec68b4375cf22bb9187dd2",
-          "sha256:b9165a4cb6cc89b5e8f38241838e6d8168cb246fbd306b527a7922efb2e39f48",
-          "sha256:808bba1f7ed07addaf83d9ec5bd20235ac430948d19cfbfb5cf900c83e35f14c",
-          "sha256:6a0c47c1ef4cef192b0d073f0d6344d30ab6d3765fc927df4fb5bb5a8043fad6",
-          "sha256:1ab0a42ee02036016dadab036eabf4115441fe5a22ec7c5f535665ceec724234",
-          "sha256:6a6e12f0d5f2a1f80023642329d6d372297c032c8d34c5af6810290e0f6df141",
-          "sha256:4d95399cd58979bce74141d44d05fb913fd048a370faaf97ee5ed8f7fe30b051",
-          "sha256:33af4ac33fffe2c4daa323176286fa0f3e1064675bbf032de67a874c6c1e4e09",
-          "sha256:82eee4c8993ae8e63d89b991b9c04c773dd153cbad36002ee383a31fbc0ad8b9",
-          "sha256:f1f89df3ad0742aa2d315cce86dbafcce2f68ed1d77cdcdc273b54838d58292a",
-          "sha256:8be3d8277268dcb2dfd97126dbc97f9d4ede8cc170f98b04d61e7156e63bff52",
-          "sha256:277d24dcf9fb72e8659baa29e87b0e417b16628f2ecebdf1ff08a53f488418bb",
-          "sha256:b4a11d96c2a33a8ea4d45fade3b959b086414d67cb41792a72ca77b8abedb3ac",
-          "sha256:58ec8600350e747ee55514b42fadb3e5d2723a0348f1b09993d7e1bd35053751",
-          "sha256:af099b17da026653a089bb513eb0d5ca4cdbc538cef83b604ba0a98869085cca",
-          "sha256:f1b0007fc58da118a6b8dde232cbaad81c534a8c8f9cb50463ed0b98caa81818",
-          "sha256:5169eef3bd91bbe20948f1b59bee73b19ec75c851692dfbcf649bb959aead0b1",
-          "sha256:474d48dc9b33fdbca69e5ebd7d6d4a76ad7455f0b6d292a166d07ef3b836339d",
-          "sha256:4eb7ff9e2e1c30570bc99480a2f8d8746039159703356dae1215fa506c7886a9",
-          "sha256:0e80ac236d6827510091ae6ac354e9235c975e12c694135268d617b8fd522376",
-          "sha256:78238ce69d6ca58c85c4bf924172acb9b1fa03ed494d9a5633c3dcc5e36e7a0f",
-          "sha256:aec491e8f3938611028ee8cc105bcddf2df3dfd625e49adfa7a3b98c0409a437"
-        ]
-      }
+  "_comment": "Pins for the Woow LiteLLM image (DESIGN v3.2 \u00a75.2). Top-level keys follow the M0 spike lock (SP1/SP4, spike/m0-sp1 55792ed) so tools/checks/*.py read this file directly; wolfi_apk and s6_overlay come from the SP2 desk draft (2026-10-09). litellm/Dockerfile must agree with this file (tests/test_config_contract.py).",
+  "image": "ghcr.io/berriai/litellm-non_root",
+  "tag": "1.104.0",
+  "litellm_version": "1.104.0",
+  "litellm_commit": "79645770fedc7ec2627e6468d31062f20f82aecc",
+  "index_digest": "sha256:37066242e6b8327fdd627682a66a9ae2a599553b4d5a84c905c6d8b9eb35c01e",
+  "platforms": {
+    "linux/amd64": {
+      "manifest_digest": "sha256:843a35c72a832e9c062b66111b1aa54e6588fb32c3ab400d3e20ea9c5fa656a0",
+      "config_digest": "sha256:bfbade18821e5fcf7291e148fddf4013711c50f347def2cf9128534de2443cde",
+      "layer_digests": [
+        "sha256:28c972c1431bbe69cb9b16c0f75b357850302e8503212392cc1e00cb26d9e9d0",
+        "sha256:1ac8b6c8dfa75a7ccef181d11762d084be5eeb711110c4310bc01a75efb09ece",
+        "sha256:392fc32e63fc5d1eec0fb45aee855ad4d0fdfa773ba098aaae620700f0ee579a",
+        "sha256:cdb5af441f92fb9a168542c81acb62a5a6a63b24eb0d26c6e67ac37f310d6260",
+        "sha256:0fa0803f038ca5a66da9409bbc4f15d761a755e14264e1bcf5aa1d214aa40ab3",
+        "sha256:0e3a84f7427f59342d7be4787e01fad97fb26e0f084e961d1527e7ed1810a0a5",
+        "sha256:b10d4a946640307a04381e8ff5b3dc262f7332586acb67ba29838d9b1d239cbc",
+        "sha256:ed4725379a22e41b02806192aff768a5e11226d9511b806bf6138e8dfba5f24e",
+        "sha256:076b3195c593899531ca6f7f358e90cc36448cf512445c76144b33dd4011f6a5",
+        "sha256:1707443352f0d5292d1da0dfa2717609c4168dc4555e26adf9453ebed7a31c19",
+        "sha256:b72d96b46af9ec2434a5b80d672c8ed77e554b6dce499c3dcdfbce01c4f205da",
+        "sha256:26fad43e9d15783307a1e3dd39c1b42ac372a7fe6fe2ca99656aec29b374ea2f",
+        "sha256:fedf51e6cc8e644823edcc73bababf16511b3ba195bf38aaa3bd619a6c35fff9",
+        "sha256:ec4c5d34952abaf81bd6d172bb34eaf04bc6d2c987e20d416c0118568a072259",
+        "sha256:46e8a2d18ea6edb87682dcd7817d609fe18fe4989a2e5631ca3805ae187718c5",
+        "sha256:d5494b4835ce0ccd22d3ce9eda41808237fc4f4aa69d58dd407d0369f580a4b5",
+        "sha256:1140cdf69465d05c2270f401c318758f2887d97f30633c6c214292a557de0fd2",
+        "sha256:005a45b0dce2761fca436fba750e7c676f0a5fc03b0dbc99f373a1766bf1d773",
+        "sha256:679ffb6574d2d602040d2e04234196324555ec11ff2cb6e7f457d72d8a0bfb9f",
+        "sha256:3b9b5b7e74a4fab1d797067276366b7c78f1ca838a7944449f66fdcf2c6a9f30",
+        "sha256:644b53e81cd3b9588424a7e46a58415bba8bf050722711053cc4baa1da73fb59",
+        "sha256:b5637e3e6d57ebf92dd9f2626437645168905fe5c735cac2fd8a22c61a86947c",
+        "sha256:39cc23e24bac4d5616b05d491d484b273b7b5805667da58263c6490ca1cf1b47",
+        "sha256:dcc021b619afc670d5d17296a870244999755a4a7b8fec7d9ab43f1139a8da7a"
+      ],
+      "layer_diff_ids": [
+        "sha256:b76b7633da4fb071018956f4fb772ea2cad2f1dc9c8c4cd3836ac2bdad8d8dfd",
+        "sha256:475ef483a00b76e33a13c8f19883e9a87b63195382c5c40426007f5753a2327b",
+        "sha256:f853e0b8057a7d575e174a3a93c8cc98c733719fc4ec68b4375cf22bb9187dd2",
+        "sha256:b9165a4cb6cc89b5e8f38241838e6d8168cb246fbd306b527a7922efb2e39f48",
+        "sha256:808bba1f7ed07addaf83d9ec5bd20235ac430948d19cfbfb5cf900c83e35f14c",
+        "sha256:6a0c47c1ef4cef192b0d073f0d6344d30ab6d3765fc927df4fb5bb5a8043fad6",
+        "sha256:1ab0a42ee02036016dadab036eabf4115441fe5a22ec7c5f535665ceec724234",
+        "sha256:6a6e12f0d5f2a1f80023642329d6d372297c032c8d34c5af6810290e0f6df141",
+        "sha256:4d95399cd58979bce74141d44d05fb913fd048a370faaf97ee5ed8f7fe30b051",
+        "sha256:33af4ac33fffe2c4daa323176286fa0f3e1064675bbf032de67a874c6c1e4e09",
+        "sha256:82eee4c8993ae8e63d89b991b9c04c773dd153cbad36002ee383a31fbc0ad8b9",
+        "sha256:f1f89df3ad0742aa2d315cce86dbafcce2f68ed1d77cdcdc273b54838d58292a",
+        "sha256:8be3d8277268dcb2dfd97126dbc97f9d4ede8cc170f98b04d61e7156e63bff52",
+        "sha256:277d24dcf9fb72e8659baa29e87b0e417b16628f2ecebdf1ff08a53f488418bb",
+        "sha256:b4a11d96c2a33a8ea4d45fade3b959b086414d67cb41792a72ca77b8abedb3ac",
+        "sha256:58ec8600350e747ee55514b42fadb3e5d2723a0348f1b09993d7e1bd35053751",
+        "sha256:af099b17da026653a089bb513eb0d5ca4cdbc538cef83b604ba0a98869085cca",
+        "sha256:f1b0007fc58da118a6b8dde232cbaad81c534a8c8f9cb50463ed0b98caa81818",
+        "sha256:5169eef3bd91bbe20948f1b59bee73b19ec75c851692dfbcf649bb959aead0b1",
+        "sha256:474d48dc9b33fdbca69e5ebd7d6d4a76ad7455f0b6d292a166d07ef3b836339d",
+        "sha256:4eb7ff9e2e1c30570bc99480a2f8d8746039159703356dae1215fa506c7886a9",
+        "sha256:0e80ac236d6827510091ae6ac354e9235c975e12c694135268d617b8fd522376",
+        "sha256:78238ce69d6ca58c85c4bf924172acb9b1fa03ed494d9a5633c3dcc5e36e7a0f",
+        "sha256:aec491e8f3938611028ee8cc105bcddf2df3dfd625e49adfa7a3b98c0409a437"
+      ]
     }
   },
-  "upstream_env": [
+  "env": [
     "PATH=/app/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin",
     "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt",
     "PRISMA_BINARY_CACHE_DIR=/opt/prisma/binaries",
@@ -79,9 +77,21 @@
     "PRISMA_OFFLINE_MODE=true"
   ],
   "env_overrides": {},
-  "wolfi": {
-    "repository": "https://packages.wolfi.dev/os",
-    "signing_key_sha256": "f0031424cf46f7db780ce63a45f0fd6aa6f85f601e6bb3b7a91fe3d4d5b7d2cc",
+  "wolfi_signing_key_sha256": "f0031424cf46f7db780ce63a45f0fd6aa6f85f601e6bb3b7a91fe3d4d5b7d2cc",
+  "wolfi_repository": "https://packages.wolfi.dev/os",
+  "source_date_epoch": 1791063324,
+  "cosign_pub": {
+    "path": "third_party/berriai-cosign.pub",
+    "source": "https://raw.githubusercontent.com/BerriAI/litellm/0112e53046018d726492c814b3644b7d376029d0/cosign.pub",
+    "sha256": "ff8869bf14ba9d10af7b64b9d479543b44daec0165e715753c43ff8a998f6dd3"
+  },
+  "expected_flattened_layer": {
+    "_comment": "SP4: the FROM-scratch base layer, identical on 4 clean builders (BuildKit v0.33.0, rewrite-timestamp, compatibility-version=30); baseline for 'unchanged unless LiteLLM changes'",
+    "digest": "sha256:03b441d95505eb7a97db5114e74f5e6b38c04f65c6bab690093724ebd502c46a",
+    "size": 402753327,
+    "diff_id": "sha256:e87d2a14e4aa3de987305e4dc2abf4c17e7e5baa65e1136cdd2fec20eba538e0"
+  },
+  "wolfi_apk": {
     "apkindex": {
       "url": "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz",
       "fetched_at": "2026-10-09T14:26:41Z",
@@ -341,15 +351,8 @@
       }
     ]
   },
-  "cosign_pub": {
-    "path": "spike/third_party/berriai-cosign.pub",
-    "source": "https://raw.githubusercontent.com/BerriAI/litellm/0112e53046018d726492c814b3644b7d376029d0/cosign.pub",
-    "sha256": "ff8869bf14ba9d10af7b64b9d479543b44daec0165e715753c43ff8a998f6dd3"
-  },
-  "source_date_epoch": null,
   "_todo": [
-    "source_date_epoch, reproducible upstream layer (SP1/SP4, supply-chain line)",
-    "upstream 52 apk packages with C: checksums, non-package binaries, maturin exclude (SP1)",
-    "apk add --simulate + installed-set comparison gate (SP2 \u00a710-2)"
+    "upstream 52 apk packages with C: checksums, non-package ELF list, maturin exclude (supply-chain line)",
+    "apk add --simulate + installed-set comparison with C: checksums (SP2 \u00a710-2)"
   ]
 }

@@ -1,0 +1,8 @@
+berriai-cosign.pub
+  BerriAI's cosign public key, used to verify ghcr.io/berriai/litellm-non_root (DESIGN v3.2 §5.3).
+  Source: https://raw.githubusercontent.com/BerriAI/litellm/0112e53046018d726492c814b3644b7d376029d0/cosign.pub
+  (README-recommended pin; byte-identical to cosign.pub in the v1.104.0 tag).
+  sha256: ff8869bf14ba9d10af7b64b9d479543b44daec0165e715753c43ff8a998f6dd3
+  M0 SP1 (spike/m0-sp1 55792ed): `cosign verify --key` passes on the index digest
+  sha256:37066242e6b8327fdd627682a66a9ae2a599553b4d5a84c905c6d8b9eb35c01e (BerriAI signs the index only).
+  Not shipped in the add-on image.

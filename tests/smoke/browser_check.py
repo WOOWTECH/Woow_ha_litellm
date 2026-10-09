@@ -40,7 +40,8 @@ def watch(page, sink):
     page.on("pageerror", lambda e: sink["pageerrors"].append(str(e)[:300]))
     page.on("console", lambda m: m.type == "error" and sink["console"].append(m.text[:300]))
     page.on("response", lambda r: "ui-bridge.js" in r.url and sink["bridge"].append(r.status))
-    page.on("requestfailed", lambda r: sink["failed"].append(f"{r.url} {r.failure}"[:300]))
+    page.on("requestfailed", lambda r: sink["failed"].append(f"{r.method} {r.url} {r.failure}"[:300]))
+    page.on("response", lambda r: r.status >= 400 and sink["http_errors"].append(f"{r.status} {r.request.method} {r.url}"[:300]))
 
 
 def main():
@@ -48,7 +49,7 @@ def main():
         browser = pw.chromium.launch()
         ctx = browser.new_context()
         page = ctx.new_page()
-        sink = {"pageerrors": [], "console": [], "bridge": [], "failed": []}
+        sink = {"pageerrors": [], "console": [], "bridge": [], "failed": [], "http_errors": []}
         watch(page, sink)
 
         page.goto(f"{INGRESS}{ENTRY}/ui/", wait_until="load", timeout=60_000)
@@ -78,11 +79,13 @@ def main():
             check("d/session cookie set", has_cookie)
         check("d/no uncaught JS error (sign-in + dashboard)", not sink["pageerrors"], sink["pageerrors"])
         check("d/console errors (informational)", not sink["console"], sink["console"][:8], required=False)
+        check("d/failed requests (informational)", not sink["failed"], sink["failed"][:10], required=False)
+        check("d/HTTP 4xx/5xx responses (informational)", not sink["http_errors"], sink["http_errors"][:10], required=False)
         page.close()
 
         # HA panel: the add-on UI in a same-origin iframe
         panel = ctx.new_page()
-        psink = {"pageerrors": [], "console": [], "bridge": [], "failed": []}
+        psink = {"pageerrors": [], "console": [], "bridge": [], "failed": [], "http_errors": []}
         watch(panel, psink)
         panel.goto(f"{INGRESS}/__ha_panel.html?src={ENTRY}/ui/", wait_until="load", timeout=60_000)
         frame_ok, frame_url = False, ""
