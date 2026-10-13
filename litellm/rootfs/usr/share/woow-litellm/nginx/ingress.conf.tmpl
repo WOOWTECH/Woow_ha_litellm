@@ -2,9 +2,11 @@
 # Rendered at boot by init-woow-supervisor; @INGRESS_ENTRY@ is the Supervisor's ingress_entry,
 # validated against ^/api/hassio_ingress/[A-Za-z0-9_-]{16,128}$ — never taken from a request header.
 
-# LiteLLM answers every response with X-Frame-Options: DENY and CSP frame-ancestors 'none'; the HA
-# frontend shows add-ons in an iframe of the same origin. Only these two exact values change, on
-# this port only; anything else (e.g. the plugin page's own SAMEORIGIN / 'self') passes unchanged.
+# HA embeds the UI at the same origin. On this private Ingress port only, rewrite
+# DENY and the standalone default CSP policy frame-ancestors 'none'. nginx joins
+# multiple upstream CSP headers with commas; preserve every other policy/directive
+# (including object/base/nonce restrictions). Explicit compound policies remain
+# unchanged, even when they forbid framing; plugin SAMEORIGIN / 'self' also survives.
 map $upstream_http_x_frame_options $woow_frame_options {
     default    $upstream_http_x_frame_options;
     "~*^deny$" "SAMEORIGIN";
@@ -12,6 +14,7 @@ map $upstream_http_x_frame_options $woow_frame_options {
 map $upstream_http_content_security_policy $woow_csp {
     default                  $upstream_http_content_security_policy;
     "frame-ancestors 'none'" "frame-ancestors 'self'";
+    "~^(?<woow_csp_before>(?:[^,]*,)*[[:blank:]]*)frame-ancestors 'none'(?<woow_csp_after>[[:blank:]]*(?:,.*)?)$" "${woow_csp_before}frame-ancestors 'self'${woow_csp_after}";
 }
 map $http_upgrade $woow_connection {
     default upgrade;
@@ -75,6 +78,7 @@ server {
     location @starting {
         default_type text/html;
         add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
         add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'" always;
         return 503 '<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta http-equiv="refresh" content="10"><title>LiteLLM 啟動中</title><style>body{font-family:system-ui,sans-serif;margin:3rem;color:#333}</style></head><body><h1>LiteLLM 啟動中…</h1><p>第一次啟動或升級後要套用資料庫 migration，可能需要幾分鐘。本頁每 10 秒自動重新整理。</p><p>LiteLLM is starting (database migrations on the first start can take a few minutes). This page reloads every 10 seconds.</p></body></html>';
     }

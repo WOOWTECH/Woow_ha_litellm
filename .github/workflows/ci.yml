@@ -61,7 +61,7 @@ jobs:
       - name: Woow plugin copy equals its lock
         run: tools/verify-woow-plugin.sh --offline
       - name: unit tests
-        run: /tmp/venv/bin/pytest -q tests
+        run: /tmp/venv/bin/pytest -q tests --ignore=tests/api_compat --ignore=tests/security_headers/test_headers.py
 
   build-smoke:
     name: build amd64 + container smoke
@@ -87,6 +87,10 @@ jobs:
         run: |
           docker run --rm --network none --entrypoint python \
             -v "$PWD/tests/protocol:/protocol:ro" "woow-litellm:ci" /protocol/check_responses.py
+      - name: offline built-image API contracts
+        run: tools/ci-api-contracts.sh woow-litellm:ci
+      - name: offline installed security middleware contracts
+        run: tools/ci-security-contracts.sh woow-litellm:ci
       - name: image facts
         run: tools/ci-image-facts.sh woow-litellm:ci
       - name: playwright (headless Chromium for the browser check)

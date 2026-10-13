@@ -8,6 +8,7 @@ set -o pipefail
 export WOOW_STEP=init-db
 . /usr/local/lib/woow-litellm/common.sh
 cd /
+salt_restore_hint="Restore a consistent backup containing both /data/postgres and /data/secrets; never generate a new salt key for an existing database"
 
 psql_su -d postgres <<'SQL'
 SET client_min_messages = warning;
@@ -19,14 +20,14 @@ woow_init scram-sql | psql_su -d postgres >/dev/null
 
 r="$(woow_init meta-sql | psql_su -d litellm)"
 if [ "$r" != "same" ]; then
-  fatal "the database belongs to a different salt key than /data/secrets/salt_key. Stored provider keys could not be decrypted, so the add-on does not start. Restore the backup that contains both /data/postgres and /data/secrets; never generate a new salt key"
+  fatal "the database belongs to a different salt key than /data/secrets/salt_key. Stored provider keys could not be decrypted, so the add-on does not start. ${salt_restore_hint}"
 fi
 
 r="$(woow_init platform-sql | psql_su -d litellm)"
 case "$r" in
   same) ;;
-  empty) fatal "woow_platform.settings holds an empty salt key copy; refusing to start" ;;
-  different) fatal "woow_platform.settings holds a different salt key than /data/secrets/salt_key; refusing to start (restore a consistent backup)" ;;
-  *) fatal "could not check the salt key copy in woow_platform.settings" ;;
+  empty) fatal "woow_platform.settings holds an empty salt key copy; refusing to start. ${salt_restore_hint}" ;;
+  different) fatal "woow_platform.settings holds a different salt key than /data/secrets/salt_key; refusing to start. ${salt_restore_hint}" ;;
+  *) fatal "could not check the salt key copy in woow_platform.settings. ${salt_restore_hint}" ;;
 esac
 log "database ready: role and database litellm, salt key fingerprint and woow_platform tables checked"

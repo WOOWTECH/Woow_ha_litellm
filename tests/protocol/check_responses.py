@@ -178,4 +178,12 @@ class ResponsesContract(unittest.TestCase):
 if __name__=='__main__':
     sys.modules.setdefault('check_responses', sys.modules[__name__])
     from check_output_recovery import OutputRecoveryContract
-    unittest.main(verbosity=2)
+    protocol = unittest.main(verbosity=2, exit=False)
+    if not protocol.result.wasSuccessful():
+        sys.exit(1)
+    # Run the Router startup regression with real upstream token acquisition,
+    # after removing this SSE suite's synthetic authentication overrides.
+    for _auth_patch in reversed(_AUTH_PATCHES):
+        _auth_patch.stop()
+    from check_subscription_policy import SubscriptionPolicyContract
+    unittest.main(defaultTest='SubscriptionPolicyContract', verbosity=2)
