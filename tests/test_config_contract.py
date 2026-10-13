@@ -24,12 +24,8 @@ ONESHOTS = {
     "init-woow-supervisor": "init-woow-secrets",
     "init-postgres": "init-woow-supervisor",
     "init-db": "postgres",
-    "litellm-predump": "init-db",
-    "litellm-migrate": "litellm-predump",
-    "woow-revoke-ui-sessions": "litellm-migrate",
-    "woow-spendlogs-indexes": "litellm",
 }
-LONGRUNS = {"postgres": "init-postgres", "litellm": "woow-revoke-ui-sessions", "nginx": "init-woow-supervisor"}
+LONGRUNS = {"postgres": "init-postgres", "litellm": "init-db", "nginx": "init-woow-supervisor", "woow-spendlogs-indexes": "litellm"}
 
 
 def code_lines(path) -> str:
@@ -65,18 +61,18 @@ def test_identity_and_platform():
 
 def test_least_privilege():
     for key in ("hassio_api", "homeassistant_api", "auth_api", "docker_api", "host_network"):
-        assert CONFIG[key] is False, key
-    assert CONFIG["apparmor"] is True
+        assert CONFIG.get(key, False) is False, key
+    assert CONFIG.get("apparmor", True) is True
     for key in ("full_access", "privileged", "devices", "host_pid", "host_ipc", "map", "hassio_role", "kernel_modules"):
         assert key not in CONFIG, key
 
 
 def test_ingress_ports_webui_backup():
-    assert CONFIG["ingress"] is True and CONFIG["ingress_port"] == 8099 and CONFIG["ingress_stream"] is True
-    assert CONFIG["panel_admin"] is True and CONFIG["panel_title"] == "LiteLLM"
+    assert CONFIG["ingress"] is True and CONFIG.get("ingress_port", 8099) == 8099 and CONFIG["ingress_stream"] is True
+    assert CONFIG.get("panel_admin", True) is True and CONFIG["panel_title"] == "LiteLLM"
     assert CONFIG["ports"] == {"4000/tcp": None}
     assert set(CONFIG["ports_description"]) == {"4000/tcp"}
-    assert CONFIG["webui"] == "http://[HOST]:[PORT:4000]/"
+    assert "webui" not in CONFIG
     assert CONFIG["backup"] == "cold"
     assert CONFIG["backup_exclude"] == ["**/pre-upgrade-dumps"]
     assert "watchdog" not in CONFIG
@@ -103,6 +99,9 @@ def test_translations_cover_schema_and_ports(lang):
     assert set(tr["network"]) == set(CONFIG["ports"])
     for key, entry in tr["configuration"].items():
         assert entry.get("name") and entry.get("description"), f"{lang}: {key}"
+    for key in CONFIG["schema"]["env_vars"][0]:
+        assert tr["configuration"]["env_vars"]["fields"][key]["name"]
+        assert tr["configuration"]["env_vars"]["fields"][key]["description"]
 
 
 # ── Dockerfile (§5.1, §5.2, §5.4, §7.6) ──────────────────────────────────────
@@ -172,7 +171,9 @@ def test_dockerfile_accounts():
 
 
 def test_labels():
-    for label in ("org.opencontainers.image.vendor=WOOWTECH", "io.hass.type=addon", "io.hass.arch=${BUILD_ARCH}",
+    for label in ("org.opencontainers.image.vendor=WOOWTECH", "org.opencontainers.image.authors=WOOWTECH",
+                  "org.opencontainers.image.url=https://github.com/WOOWTECH/Woow_ha_litellm",
+                  "org.opencontainers.image.created=${BUILD_DATE}", "io.hass.type=addon", "io.hass.arch=${BUILD_ARCH}",
                   "io.hass.version=${BUILD_VERSION}", "org.opencontainers.image.revision=${BUILD_REF}"):
         assert label in DOCKERFILE
     src = PLUGIN_LOCK["source"]
@@ -183,8 +184,10 @@ def test_healthcheck_start_period_covers_boot():
     m = re.search(r"HEALTHCHECK --start-period=(\d+)m", DOCKERFILE)
     assert m
     start = int(m.group(1)) * 60_000
-    predump = int((S6 / "litellm-predump/timeout-up").read_text())
-    migrate = int((S6 / "litellm-migrate/timeout-up").read_text())
+    import runpy
+    service = runpy.run_path(str(ROOTFS / "usr/local/lib/woow-litellm/woow_service.py"))
+    predump = service["STARTUP"][0][1] * 1000
+    migrate = service["STARTUP"][1][1] * 1000
     assert predump == 600_000 and migrate == 1_500_000
     assert start >= 60_000 + predump + migrate + 300_000
     assert "/usr/local/bin/woow-healthcheck" in DOCKERFILE
@@ -193,7 +196,7 @@ def test_healthcheck_start_period_covers_boot():
 
 
 # ── s6 services (§7.1) ────────────────────────────────────────────────────────
-def test_thirteen_services_enabled():
+def test_services_enabled():
     names = {p.name for p in S6.iterdir()}
     assert names == set(ONESHOTS) | set(LONGRUNS)
     assert {p.name for p in BUNDLE.iterdir()} == names
@@ -216,6 +219,8 @@ def test_with_contenv_only_where_designed():
                 users.add(svc.name)
     assert users == {"init-woow-env", "init-woow-supervisor"}
     for path in (ROOTFS / "usr/local/lib/woow-litellm").iterdir():
+        if not path.is_file():
+            continue
         assert "with-contenv" not in code_lines(path) or path.name == "woow_init.py"
 
 
@@ -224,7 +229,10 @@ def test_longrun_controls():
     assert int((S6 / "postgres/timeout-down").read_text()) == 60000
     assert int((S6 / "litellm/timeout-down").read_text()) == 30000
     for svc in ("postgres", "litellm"):
-        assert (S6 / svc / "notification-fd").read_text().strip() == "3"
+        if svc == "postgres":
+            assert (S6 / svc / "notification-fd").read_text().strip() == "3"
+        else:
+            assert not (S6 / svc / "notification-fd").exists()
         assert (S6 / svc / "data/check").exists()
         assert "svc-finish" in (S6 / svc / "finish").read_text()
     # 5 failures: halt AND exit 125 (permanent failure), never `exec halt` alone: a crash loop
@@ -232,15 +240,15 @@ def test_longrun_controls():
     finish = code_lines(ROOTFS / "usr/local/lib/woow-litellm/svc-finish")
     assert "/run/s6/basedir/bin/halt" in finish and "exec /run/s6/basedir/bin/halt" not in finish
     assert re.search(r"/run/s6/basedir/bin/halt[^\n]*\n\s*exit 125\n", finish)
-    run = (S6 / "litellm/run").read_text()
+    run = (ROOTFS / "usr/local/lib/woow-litellm/litellm-start").read_text()
     assert "--log_config /usr/share/woow-litellm/uvicorn-log.json" in run
     assert "s6-setuidgid nobody" in run and "/command/cd /app" in run
-    assert "woow_chatgpt.py restore" in run
+    assert "woow_chatgpt.py restore" in (ROOTFS / "usr/local/lib/woow-litellm/litellm-restore").read_text()
 
 
 def test_executable_bits():
     for path in list((ROOTFS / "usr/local/lib/woow-litellm").iterdir()) + list((ROOTFS / "usr/local/bin").iterdir()):
-        if path.name in ("common.sh", "woow_init.py"):
+        if not path.is_file() or path.name == "common.sh" or path.suffix == ".py":
             continue
         assert path.stat().st_mode & 0o111, f"{path} must be executable"
     for svc in S6.iterdir():
@@ -320,6 +328,6 @@ def test_actions_pinned_by_sha():
 def test_shell_scripts_parse():
     for path in list((ROOTFS / "usr/local/lib/woow-litellm").iterdir()) + list(S6.glob("*/run")) + list(
         S6.glob("*/finish")) + list(S6.glob("*/data/check")) + list((REPO / "tools").glob("*.sh")):
-        if path.suffix == ".py" or path.name == "woow-init":
+        if not path.is_file() or path.suffix == ".py" or path.name == "woow-init":
             continue
         subprocess.run(["sh", "-n", str(path)], check=True)

@@ -120,7 +120,7 @@ req "a/PostgreSQL 18 ($PGV)" grep -q ' 18\.' <<< "$PGV"
 req "a/PostgreSQL listens on 127.0.0.1:5432 only" sh -c "docker exec $CUR netstat -tln | grep ':5432 ' | grep -qv '127.0.0.1:5432' && exit 1 || docker exec $CUR netstat -tln | grep -q '127.0.0.1:5432 '"
 req "a/LiteLLM listening on 4000" sh -c "docker exec $CUR netstat -tln | grep -q ':4000 '"
 INDEXES="$(psql_addon "SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname IN ('LiteLLM_SpendLogs_api_key_startTime_idx','LiteLLM_SpendLogs_litellm_call_id_idx') AND i.indisvalid")"
-if [ "$INDEXES" = 2 ]; then result "a/SpendLogs hand-built indexes valid" PASS; else result "a/SpendLogs hand-built indexes valid" WARN "$INDEXES/2 (oneshot may still run)"; fi
+if [ "$INDEXES" = 2 ]; then result "a/SpendLogs hand-built indexes valid" PASS; else result "a/SpendLogs hand-built indexes valid" WARN "$INDEXES/2 (index worker may still run)"; fi
 HELP="$(docker run --rm --network "$NET" --ip "$INGRESS_IP" --entrypoint /usr/bin/curl "$IMAGE" -fsS "http://$ADDON_IP:8099/")"
 req "a/nginx 8099 serves the help page (no ingress_entry)" grep -q '這次開機無法在側邊欄顯示' <<< "$HELP"
 req "a/help page has no secret" sh -c "! printf '%s' \"\$1\" | grep -qF -e \"\$2\" -e \"\$3\" -e \"\$4\" -e \"\$5\"" _ "$HELP" "$MASTER" "$UIPW" "$PGPW" "$SALT"
@@ -294,9 +294,7 @@ endgroup
 # a non-zero exit code and the reason in the log, and nothing restarts after that: exactly one FATAL
 # line, at most 5 failures counted, the container gone within 60 s of the FATAL line. Three paths:
 #   ready    LiteLLM crashes after the start has completed (the halt alone stops the container);
-#   early    LiteLLM crashes before its first readiness: s6-rc (stage 2) is still waiting for it and
-#            holds the s6-rc lock that the shutdown (stage 3) needs; the finish script's exit 125
-#            (permanent failure) is what ends that wait. Before the fix this path never stopped;
+#   early    LiteLLM crashes before its first HTTP response; startup no longer holds the s6-rc lock;
 #   pg       PostgreSQL crashes before its first readiness (same finish script).
 crash_check() { # name, label: wait for the container to stop by itself, then check how
   local name="$1" label="$2" code log="$WORK/$1.log" n fatal tf te gap=-
@@ -334,8 +332,8 @@ start_addon woow-crash-early
 for _ in $(seq 1 300); do in_addon sh -c 'test -s /run/litellm/config.yaml' 2>/dev/null && break; sleep 0.2; done
 in_addon sh -c 'printf "model_list: [\n" > /run/litellm/config.yaml'
 crash_check woow-crash-early "LiteLLM, before its first readiness"
-req "x/crash loop (LiteLLM, before its first readiness): s6-rc gave up waiting for litellm" \
-  grep -q 'unable to start service litellm' "$WORK/woow-crash-early.log"
+req "x/crash loop (LiteLLM, before its first readiness): no s6 readiness lock" \
+  test ! -f "$REPO/litellm/rootfs/etc/s6-overlay/s6-rc.d/litellm/notification-fd"
 
 in_data "echo 'woow_smoke_bogus_parameter = 1' >> /data/postgres/postgresql.auto.conf"
 start_addon woow-crash-pg
@@ -343,6 +341,52 @@ crash_check woow-crash-pg "PostgreSQL, before its first readiness"
 req "x/crash loop (PostgreSQL, before its first readiness): s6-rc gave up waiting for postgres" \
   grep -q 'unable to start service postgres' "$WORK/woow-crash-pg.log"
 in_data "sed -i '/^woow_smoke_bogus_parameter/d' /data/postgres/postgresql.auto.conf"
+endgroup
+
+# Deterministically hold a startup step while exercising real s6, PostgreSQL and docker stop.
+# These mounts exist only in the CI container. No host/HA service is changed.
+group "extra: stop during predump and migration"
+for step in predump migrate; do
+  stub="$WORK/slow-$step"
+  if [ "$step" = predump ]; then
+    cat > "$stub" <<'STUB'
+#!/bin/sh
+for last; do :; done
+printf 'partial dump fixture' > "$last"
+touch /tmp/woow-m4-step
+exec sleep 600
+STUB
+    mount_target=/usr/bin/pg_dump
+    in_data 'jq '\''.litellm_version = "smoke-old"'\'' /data/woow/state.json > /data/woow/state.new && mv /data/woow/state.new /data/woow/state.json'
+  else
+    cat > "$stub" <<'STUB'
+#!/bin/sh
+touch /tmp/woow-m4-step
+exec sleep 600
+STUB
+    mount_target=/usr/local/lib/woow-litellm/litellm-migrate
+  fi
+  chmod 755 "$stub"
+  start_addon "woow-stop-$step" -v "$stub:$mount_target:ro"
+  started=false
+  for _ in $(seq 1 120); do
+    if in_addon test -f /tmp/woow-m4-step; then started=true; break; fi
+    sleep 1
+  done
+  req "stop/$step: reached held startup step" test "$started" = true
+  req "stop/$step: s6 startup lock released" timeout 5 docker exec "$CUR" /command/s6-rc -a list
+  t0="$(date +%s)"
+  docker stop -t 120 "$CUR" >/dev/null
+  elapsed=$(( $(date +%s) - t0 ))
+  code="$(docker inspect -f '{{.State.ExitCode}}' "$CUR")"
+  req "stop/$step: no SIGKILL within 120s (${elapsed}s, exit $code)" test "$code" != 137
+  req "stop/$step: bounded stop" test "$elapsed" -lt 120
+  req "stop/$step: PostgreSQL shut down cleanly" in_data '/usr/bin/pg_controldata /data/postgres | grep -Eq "Database cluster state: +shut down$"'
+  req "stop/$step: partial dumps cleaned" in_data 'test -z "$(find /data/pre-upgrade-dumps -name "*.tmp" -print -quit)"'
+  docker rm "$CUR" >/dev/null
+  # Reset only the smoke version marker; the test never ran a real new migration.
+  in_data 'jq '\''.litellm_version = "1.104.0"'\'' /data/woow/state.json > /data/woow/state.new && mv /data/woow/state.new /data/woow/state.json'
+done
 endgroup
 
 FAILED="$(grep -c '"status": "FAIL"' "$RESULTS" || true)"

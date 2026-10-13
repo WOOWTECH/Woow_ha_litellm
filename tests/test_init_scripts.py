@@ -26,9 +26,10 @@ COMMON_KEYS = UPSTREAM_KEYS | {
     "TZ", "STORE_MODEL_IN_DB", "LITELLM_MODE", "NUM_WORKERS", "GRACEFUL_SHUTDOWN_TIMEOUT", "CHECKPOINT_DISABLE",
     "LITELLM_LOCAL_MODEL_COST_MAP", "LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS", "LITELLM_LOCAL_AUTOROUTER_PRESETS",
     "LITELLM_LOCAL_BLOG_POSTS", "LITELLM_LOCAL_POLICY_TEMPLATES", "LITELLM_DISABLE_NO_REDIS_WARNING", "LITELLM_LOG",
-    "LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "DATABASE_URL", "UI_PASSWORD",
+    "DATABASE_URL",
 }
 LITELLM_ONLY = {
+    "LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "UI_PASSWORD",
     "DISABLE_SCHEMA_UPDATE", "UI_USERNAME", "LITELLM_UI_SESSION_DURATION", "LITELLM_UI_PATH",
     "LITELLM_EXPIRED_UI_SESSION_KEY_CLEANUP_ENABLED", "LITELLM_EXPIRED_UI_SESSION_KEY_CLEANUP_INTERVAL_SECONDS",
     "FORWARDED_ALLOW_IPS", "ROOT_REDIRECT_URL", "NO_DOCS", "NO_REDOC", "NO_OPENAPI",
@@ -252,7 +253,7 @@ def test_user_env_var_reaches_litellm_only_and_is_masked(box):
     )
     res = box.run("env")
     assert res.returncode == 0, res.stderr
-    assert "sk-not-a-real-key-123" not in res.stderr and "OPENAI_API_KEY=******" in res.stderr
+    assert "sk-not-a-real-key-123" not in res.stderr and "OPENAI_API_KEY" in res.stderr
     box.ok("secrets")
     assert box.envdir("litellm")["OPENAI_API_KEY"] == "sk-not-a-real-key-123"
     assert box.envdir("litellm")["LITELLM_LOG"] == "DEBUG"

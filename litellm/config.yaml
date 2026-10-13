@@ -10,26 +10,16 @@ arch:
 stage: experimental
 homeassistant: 2026.5.0 # only for D-09 (a): older Core lets non-admin users read add-on options
 init: false # s6-overlay v3 must be PID 1
-startup: application
-boot: auto
+# Supervisor defaults: no host/API privileges, AppArmor on, admin-only Ingress on 8099.
 timeout: 120 # LiteLLM 20 s graceful + PostgreSQL fast shutdown (DESIGN §7.7)
-hassio_api: false # /info, /addons/self/info and /addons/self/options are API-bypass paths
-homeassistant_api: false
-auth_api: false
-docker_api: false
-host_network: false
-apparmor: true
 ingress: true
-ingress_port: 8099
 ingress_stream: true
 panel_icon: mdi:transit-connection-variant
 panel_title: LiteLLM
-panel_admin: true
 ports:
   4000/tcp: null # off by default; add-ons reach http://<hostname>:4000 on the internal network
 ports_description:
   4000/tcp: LiteLLM API and admin UI (HTTP for LAN; use Cloudflare Tunnel for HTTPS)
-webui: "http://[HOST]:[PORT:4000]/" # "/" redirects to the prefixed admin UI; a bare /ui is 404 by design
 backup: cold
 backup_exclude:
   - "**/pre-upgrade-dumps" # never exclude pg_wal

@@ -6,6 +6,13 @@ export WOOW_STEP=litellm-predump
 . /usr/local/lib/woow-litellm/common.sh
 cd /
 DIR=/data/pre-upgrade-dumps
+# Single startup writer. A killed previous container cannot have an active dump here.
+rm -f -- "$DIR"/pre-*.dump.tmp
+tmp=
+cleanup() { if [ -n "$tmp" ]; then rm -f -- "$tmp"; fi; }
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 cur="$(jq -r .litellm_version /usr/share/woow-litellm/build-info.json)"
 prev="$(woow_init state-get litellm_version)"
@@ -13,10 +20,13 @@ if [ "$prev" = "$cur" ]; then
   log "database already migrated for LiteLLM $cur; no dump needed"
   exit 0
 fi
-if [ "$(psql_su -d litellm -c "SELECT to_regclass('public._prisma_migrations') IS NOT NULL")" != "t" ]; then
-  log "fresh database: nothing to back up"
-  exit 0
-fi
+has_migrations="$(psql_su -d litellm -c "SELECT to_regclass('public._prisma_migrations') IS NOT NULL")" \
+  || fatal "cannot inspect LiteLLM migrations; the one-way migration is NOT run without a dump"
+case "$has_migrations" in
+  t) ;;
+  f) log "fresh database: nothing to back up"; exit 0 ;;
+  *) fatal "unexpected migration query result; refusing the one-way migration" ;;
+esac
 name="pre-${prev:-unknown}-to-${cur:?}-$(date -u +%Y%m%dT%H%M%SZ).dump"
 tmp="${DIR:?}/${name:?}.tmp"
 log "LiteLLM ${prev:-unknown} -> $cur: writing $name before migrating"

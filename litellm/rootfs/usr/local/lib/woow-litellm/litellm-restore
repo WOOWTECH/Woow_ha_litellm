@@ -1,0 +1,9 @@
+#!/bin/sh
+# Restore subscription state; keep existing warn-and-start policy.
+ENVDIR=/run/woow/env/litellm
+if [ "$(cat "$ENVDIR/WOOW_CHATGPT_ENABLED" 2>/dev/null)" = "true" ]; then
+  if ! ( cd /app && /command/emptyenv /command/s6-envdir "$ENVDIR" \
+         /command/s6-setuidgid nobody /app/.venv/bin/python /usr/share/woow-litellm/py/woow_chatgpt.py restore ); then
+    echo "[woow-litellm] litellm: ChatGPT sign-ins not restored (see above); LiteLLM starts anyway"
+  fi
+fi

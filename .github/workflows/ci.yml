@@ -24,6 +24,11 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0 (Node 24)
         with:
           persist-credentials: false
+      - name: Home Assistant app configuration
+        uses: frenck/action-app-linter@b9cfd1bc62ba60d2c4fc96317b5f7ada5923f4a7 # v2.21.1
+        with:
+          path: ./litellm
+          community: false
       - name: shellcheck
         run: |
           shellcheck --version | head -n 2
@@ -35,6 +40,8 @@ jobs:
             litellm/rootfs/usr/local/lib/woow-litellm/init-db \
             litellm/rootfs/usr/local/lib/woow-litellm/litellm-predump \
             litellm/rootfs/usr/local/lib/woow-litellm/litellm-migrate \
+            litellm/rootfs/usr/local/lib/woow-litellm/litellm-restore \
+            litellm/rootfs/usr/local/lib/woow-litellm/litellm-start \
             litellm/rootfs/usr/local/lib/woow-litellm/woow-revoke-ui-sessions \
             litellm/rootfs/usr/local/lib/woow-litellm/woow-spendlogs-indexes \
             litellm/rootfs/usr/local/bin/woow-healthcheck \
@@ -71,6 +78,7 @@ jobs:
           start=$(date +%s)
           docker buildx build --platform linux/amd64 --pull --no-cache --provenance=false --sbom=false \
             --build-arg BUILD_VERSION="$version" --build-arg BUILD_REF="${GITHUB_SHA}" --build-arg BUILD_ARCH=amd64 \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --load -t woow-litellm:ci litellm
           echo "build took $(( $(date +%s) - start ))s"
           docker image inspect -f 'id={{.Id}} size={{.Size}} layers={{len .RootFS.Layers}}' woow-litellm:ci
