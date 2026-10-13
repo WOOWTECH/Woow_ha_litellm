@@ -109,6 +109,10 @@ jobs:
           docker buildx build --platform linux/amd64 --pull --no-cache --provenance=false --sbom=false \
             --build-arg BUILD_VERSION="${VERSION}" --build-arg BUILD_REF="${GITHUB_SHA}" --build-arg BUILD_ARCH=amd64 \
             --load -t "${IMAGE}:${VERSION}" litellm
+      - name: offline Responses protocol regressions
+        run: |
+          docker run --rm --network none --entrypoint python \
+            -v "$PWD/tests/protocol:/protocol:ro" "${IMAGE}:${VERSION}" /protocol/check_responses.py
       - name: image facts
         run: tools/ci-image-facts.sh "${IMAGE}:${VERSION}"
       - name: playwright (headless Chromium for the browser check)
