@@ -105,12 +105,17 @@ RUN python -I /usr/share/woow-litellm/patches/apply_responses_fix.py
 # Addon-local restore error contract; canonical plugin copy and lock stay unchanged.
 RUN python -I /usr/share/woow-litellm/patches/apply_restore_fix.py
 
-ARG BUILD_VERSION=0.1.1
+ARG BUILD_VERSION=0.1.2
 ARG BUILD_REF=unknown
 ARG BUILD_ARCH=amd64
+# CI supplies the actual UTC build time; do not inherit the base image creation date.
+ARG BUILD_DATE
 LABEL org.opencontainers.image.title="Woow LiteLLM" \
       org.opencontainers.image.description="LiteLLM AI gateway (OpenAI-compatible) with built-in PostgreSQL, packaged by WOOWTECH for its own Home Assistant hosts (private image)" \
       org.opencontainers.image.vendor=WOOWTECH \
+      org.opencontainers.image.authors=WOOWTECH \
+      org.opencontainers.image.url=https://github.com/WOOWTECH/Woow_ha_litellm \
+      org.opencontainers.image.created=${BUILD_DATE} \
       org.opencontainers.image.source=https://github.com/WOOWTECH/Woow_ha_litellm \
       org.opencontainers.image.revision=${BUILD_REF} \
       org.opencontainers.image.version=${BUILD_VERSION} \

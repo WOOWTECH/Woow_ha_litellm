@@ -12,7 +12,7 @@ docker run --rm --entrypoint sh "$IMG" -c '
 docker image inspect -f '{{json .Config.Labels}}' "$IMG" | python3 -m json.tool
 docker image inspect -f 'Entrypoint={{json .Config.Entrypoint}} Cmd={{json .Config.Cmd}} User={{json .Config.User}} WorkingDir={{.Config.WorkingDir}}' "$IMG"
 IMG="$IMG" python3 - <<'PY'
-import json, os, subprocess
+import datetime, json, os, subprocess
 img = os.environ["IMG"]
 lock = json.load(open("litellm/upstream.lock.json"))
 out = subprocess.run(["docker", "run", "--rm", "--entrypoint", "apk", img, "info", "-v"],
@@ -23,6 +23,10 @@ assert not missing
 cfg = json.loads(subprocess.run(["docker", "image", "inspect", "-f", "{{json .Config}}", img],
                                 capture_output=True, text=True, check=True).stdout)
 assert cfg["Labels"]["org.opencontainers.image.vendor"] == "WOOWTECH"
+assert cfg["Labels"]["org.opencontainers.image.authors"] == "WOOWTECH"
+assert cfg["Labels"]["org.opencontainers.image.url"] == "https://github.com/WOOWTECH/Woow_ha_litellm"
+assert cfg["Labels"]["org.opencontainers.image.created"].endswith("Z")
+datetime.datetime.fromisoformat(cfg["Labels"]["org.opencontainers.image.created"].replace("Z", "+00:00"))
 assert cfg["Entrypoint"] == ["/init"] and not cfg.get("Cmd"), (cfg["Entrypoint"], cfg.get("Cmd"))
 assert cfg.get("User") in ("root", "0", ""), cfg.get("User")
 env = dict(kv.split("=", 1) for kv in cfg["Env"])

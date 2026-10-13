@@ -1,6 +1,16 @@
 """Offline checks against the image's real LiteLLM HTTP/provider/bridge implementation."""
 import os
 os.environ['LITELLM_LOCAL_MODEL_COST_MAP'] = 'True'
+import sys
+
+
+def _offline_only(event, args):
+    if event in {"socket.connect", "socket.connect_ex", "socket.getaddrinfo", "socket.bind", "socket.sendto",
+                 "subprocess.Popen", "os.system", "os.posix_spawn", "os.fork", "os.forkpty", "os.exec"}:
+        raise PermissionError("Offline protocol suite forbids network and child processes")
+
+sys.addaudithook(_offline_only)
+
 import asyncio
 import datetime
 import json
@@ -8,6 +18,20 @@ import unittest
 from unittest.mock import patch
 
 import httpx
+from litellm.llms.chatgpt.authenticator import Authenticator
+
+# Public completion resolves provider credentials before reaching the HTTP seam.
+# Stub that boundary before constructing any config; never touch real auth state.
+_AUTH_PATCHES = (
+    patch.object(Authenticator, '__init__', return_value=None),
+    patch.object(Authenticator, 'get_access_token', return_value='synthetic-offline-token'),
+    patch.object(Authenticator, 'get_account_id', return_value='synthetic-offline-account'),
+    patch.object(Authenticator, 'get_api_base', return_value='https://offline.invalid'),
+    patch.object(Authenticator, '_read_auth_file', side_effect=AssertionError('Auth file access forbidden')),
+    patch.object(Authenticator, '_write_auth_file', side_effect=AssertionError('Auth file access forbidden')),
+)
+for _auth_patch in _AUTH_PATCHES:
+    _auth_patch.start()
 from litellm.llms.chatgpt.responses.transformation import ChatGPTResponsesAPIConfig
 from litellm.llms.openai.responses.transformation import OpenAIResponsesAPIConfig
 from litellm.llms.custom_httpx.llm_http_handler import BaseLLMHTTPHandler
@@ -45,14 +69,15 @@ def sse(empty=False, failure=False, incomplete=False, truncated=False, top_error
 
 class ResponsesContract(unittest.TestCase):
     def exercise(self, *, asynchronous=False, stream=False, text_input=True,
-                 empty=False, failure=False, incomplete=False, truncated=False, top_error=False, provider='chatgpt', extra_body=None):
+                 empty=False, failure=False, incomplete=False, truncated=False, top_error=False, provider='chatgpt', extra_body=None, wire=None, collect=False, check_response=None):
         seen=[]
         def serve(request):
             body=json.loads(request.content); seen.append(body)
             if provider=='chatgpt':
                 self.assertIs(body['stream'], True)
                 self.assertIsInstance(body['input'],list)
-                return httpx.Response(200, text=sse(empty,failure,incomplete,truncated,top_error), headers={'content-type':'text/event-stream'})
+            if provider=='chatgpt' or wire is not None:
+                return httpx.Response(200, text=wire if wire is not None else sse(empty,failure,incomplete,truncated,top_error), headers={'content-type':'text/event-stream', 'x-request-id':'synthetic-request'})
             return httpx.Response(200,json=payload([ITEM]))
         transport=httpx.MockTransport(serve)
         log=Logging(model='gpt-6-luna',messages=[],stream=stream,call_type='responses',
@@ -69,6 +94,9 @@ class ResponsesContract(unittest.TestCase):
                     client=AsyncHTTPHandler(transport=transport)
                     try:
                         result=await handler.async_response_api_handler(**args,client=client)
+                        if collect:
+                            from litellm.completion_extras.litellm_responses_transformation.handler import ResponsesToCompletionBridgeHandler
+                            return await ResponsesToCompletionBridgeHandler()._collect_response_from_stream_async(result)
                         if stream:
                             events=[event async for event in result]
                             self.assertTrue(events)
@@ -80,9 +108,15 @@ class ResponsesContract(unittest.TestCase):
             else:
                 with httpx.Client(transport=transport) as http:
                     result=handler.response_api_handler(**args,client=HTTPHandler(client=http))
-                    if stream:
+                    if collect:
+                        from litellm.completion_extras.litellm_responses_transformation.handler import ResponsesToCompletionBridgeHandler
+                        result=ResponsesToCompletionBridgeHandler()._collect_response_from_stream(result)
+                    elif stream:
                         self.assertTrue(list(result))
         self.assertEqual(len(seen),1)
+        if check_response is not None:
+            check_response(result, log)
+            return seen
         if stream:
             self.assertNotIsInstance(result,ResponsesAPIResponse)
         else:
@@ -141,4 +175,7 @@ class ResponsesContract(unittest.TestCase):
                 self.assertNotIn('data:',str(error.exception))
                 self.assertNotIn('msg_test',str(error.exception))
 
-if __name__=='__main__': unittest.main(verbosity=2)
+if __name__=='__main__':
+    sys.modules.setdefault('check_responses', sys.modules[__name__])
+    from check_output_recovery import OutputRecoveryContract
+    unittest.main(verbosity=2)

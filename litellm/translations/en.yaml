@@ -15,7 +15,7 @@ configuration:
     description: >-
       Leave empty to keep the stored password (generated on the first start and written back here
       once, like the master key). At least 12 characters. Changing it and restarting signs out every
-      admin UI session.
+      admin UI session. No leading or trailing whitespace.
   ui_session_duration:
     name: Admin UI session length
     description: How long an admin UI sign-in lasts, 1h to 24h (default 4h).
@@ -43,8 +43,8 @@ configuration:
     description: >-
       Let LiteLLM use the allowance of ChatGPT Plus / Pro subscriptions (the same feature as on WOOW
       PaaS). Turning it off does not delete connected accounts; disconnect them on the ChatGPT
-      subscription page first. The same ChatGPT account may sign in here and on PaaS separately, but
-      do not restore this add-on's backup on a second host and keep using both.
+      subscription page first. Use one ChatGPT account in one place (PaaS or here); long-term independent
+      sign-ins are not verified. Never clone a backup to another active host: it shares rotating tokens.
   api_docs:
     name: API docs
     description: >-
@@ -54,6 +54,14 @@ configuration:
     name: Environment variables
     description: >-
       Extra environment variables for LiteLLM. Variables the add-on sets itself (keys, database,
-      paths, the ChatGPT plugin, S6_, PRISMA_ …) are refused.
+      paths, login throttling, the ChatGPT plugin, S6_, PRISMA_ …) are refused at startup.
+      Values are never logged by init, but remain in options and backups; use encrypted backups.
+    fields:
+      key:
+        name: Variable name
+        description: Upper-case environment name; add-on managed settings cannot be overridden.
+      value:
+        name: Value
+        description: Nonempty, single line, at most 4095 bytes, no trailing space or tab. Remove the row to unset.
 network:
   4000/tcp: LiteLLM API and admin UI (HTTP on the LAN; use Cloudflare Tunnel for HTTPS). Off by default.

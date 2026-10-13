@@ -1,3 +1,6 @@
 #!/bin/sh
-# Docker HEALTHCHECK (DESIGN §7.6): LiteLLM liveliness only. Never /health (it calls every model).
-exec /usr/bin/curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:4000/health/liveliness
+# Both listeners must answer. Never /health (it calls every model).
+/usr/bin/curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:4000/health/liveliness || exit 1
+# Loopback is denied by the Ingress ACL; 403 is the expected nginx liveness response.
+code="$(/usr/bin/curl -sS -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:8099/)" || exit 1
+[ "$code" = 403 ]
