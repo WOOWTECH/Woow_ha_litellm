@@ -89,6 +89,13 @@ proc_env_value() { # pattern, variable → value (only for non-secret variables)
   docker exec -u "$uid" "$CUR" sh -c "tr '\\0' '\\n' < /proc/$pid/environ | sed -n 's/^$2=//p'"
 }
 
+# Exercise the installed nginx template with duplicate upstream CSP headers.
+# This disposable container has loopback only; the existing browser check below
+# separately validates the actual application in the HA same-origin panel.
+req "nginx/multiple CSP policies and startup503 headers" docker run --rm --network none \
+  -v "$REPO/tests/nginx:/checks:ro" --entrypoint /app/.venv/bin/python \
+  "$IMAGE" -I /checks/check_ingress_headers.py
+
 docker network create --subnet 172.30.32.0/23 --gateway 172.30.32.1 "$NET" >/dev/null
 cp "$REPO/tests/fixtures/options.default.json" "$DATA/options.json"
 # OpenAI-compatible stand-in (Responses API background mode), on the same network as the add-on.

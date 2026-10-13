@@ -1,6 +1,6 @@
 # M4 HA candidate contracts (2026-10-13)
 
-Base: `ddffc45`, add-on 0.1.1, LiteLLM 1.104.0. This candidate is not released; the parent chooses the release version and integrates the separately owned plugin update after review.
+Original M4 base: `ddffc45`, add-on 0.1.1, LiteLLM 1.104.0; integrated in 0.1.2. The follow-up below is based on `bdb5739` (0.1.2); the parent chooses its release version and integrates separately owned plugin changes after review.
 
 ## Startup and cold backup
 
@@ -29,3 +29,57 @@ Build workflows pass UTC BUILD_DATE and override inherited OCI author/URL/date. 
 ## Integration boundaries
 
 The three synced plugin Python files and their lock are untouched. Original Responses fixes are retained. No HA/SSH/runtime action, image push, merge or deploy is part of this patch. Parent review must cover the new startup supervisor and run the exact CI image build, offline protocol regressions, image-facts check and complete container smoke before releasing. Live lifecycle results must not be inferred from local source tests.
+
+## Follow-up: disabled subscription startup (base bdb5739 / 0.1.2)
+
+This follow-up does not bump the release version. The parent owns release integration.
+LiteLLM 1.104.0 calls ChatGPT authentication while initializing Router deployments;
+without the plugin's import hook, a retained subscription model can enter device login
+before HTTP startup. This is verified upstream behavior, not an upstream disable feature.
+
+HA init now writes `/run/woow/chatgpt-subscription` atomically, root-owned mode 0644
+under the existing root-owned 0711 tmpfs directory. Only the exact bytes `enabled\n` (LF, not CRLF) permit ChatGPT
+deployments. Disabled, missing, unreadable or invalid policy excludes them from the
+in-memory Router before provider construction. The pinned HA build patch covers
+`set_model_list`, `add_deployment`, and `upsert_deployment` (initial DB loading,
+periodic DB updates and direct additions). Provider identity gives a resolved, nonempty explicit `custom_llm_provider` precedence
+over the underlying `model` prefix; only absent/empty explicit providers use that
+prefix. Both fields support environment references without calling the authenticating resolver;
+a public display name alone is not a provider identity.
+
+There is no SQL mutation, model deletion, credential deletion, token refresh or
+plugin import in the gate. With the option off, no PYTHONPATH, CHATGPT_TOKEN_DIR,
+WOOW_* variables or plugin routes are added. Other-provider deployments remain
+available. Options take effect after restart; re-enabling reloads retained models.
+This patch prevents startup/model-loading authentication, not every possible direct
+upstream API invocation with a raw provider name. The canonical plugin is untouched.
+
+`tests/protocol/check_responses.py`, already used by CI and publish, runs the existing
+44 SSE cases and then the separate subscription Router cases after removing the
+SSE authentication stubs. The Router cases use real installed methods and synthetic
+authentication boundaries; they are not a built-container or live-HA receipt.
+
+Changelog headings use plain `## VERSION`; dates belong on separate lines. The
+exact `SupervisorAddonUpdateEntity.async_release_notes` extractor from HA Core
+2026.7.2 was executed locally: bracketed/date headings fall back to the whole log,
+while plain latest/installed headings return only the release interval. The new
+behavioral contract covers both cases, replacing the incorrect bracket-format test.
+
+
+## Ingress CSP and startup headers
+
+On the private Ingress listener only, the standalone default CSP policy
+`frame-ancestors 'none'` becomes `frame-ancestors 'self'`, including when nginx
+combines multiple upstream CSP fields into a comma-separated policy list. All
+other policies/directives retain their content and independent enforcement.
+Explicit compound policies are unchanged, including a compound policy that
+forbids framing; plugin `SAMEORIGIN` and nonce directives remain intact. This is
+not a blanket removal of upstream framing restrictions. Direct API headers are
+unchanged. The nginx-generated startup503 page also sends `nosniff`.
+
+`tests/nginx/check_ingress_headers.py` runs a real nginx against synthetic
+loopback responses, including duplicate CSP fields, nonce/plugin policies,
+explicit deny, and the local startup page. Container smoke runs it against the
+installed template, then the existing Chromium HA-panel check validates the
+actual app iframe. Optional `NGINX_BROWSER=1` adds local synthetic same-origin
+and cross-origin browser controls; neither fixture is a live-HA receipt.
