@@ -98,6 +98,10 @@ SUPERVISOR_MIN = (2026, 7, 0)
 CORE_MIN = (2026, 5, 0)
 
 SECRET_FILES = ("master_key", "salt_key", "pg_password", "ui_password")
+SALT_RESTORE_HINT = (
+    "Restore a consistent backup containing both /data/postgres and /data/secrets; "
+    "never generate a new salt key for an existing database"
+)
 
 
 class Fatal(Exception):
@@ -581,14 +585,14 @@ def cmd_secrets() -> int:
         if not fresh_db:
             raise Fatal(
                 "the database already exists but /data/secrets/salt_key is missing. Without the salt key "
-                "every stored provider key is unreadable, so a new one is NEVER generated. Restore a backup "
-                "that contains /data/secrets (or put the original salt key back) and start again"
+                "every stored provider key is unreadable, so a new one is NEVER generated. "
+                + SALT_RESTORE_HINT
             )
         salt = new_key()
         write_file(os.path.join(P.secrets, "salt_key"), salt, 0o600)
         made.append("salt key")
     elif not SECRET_VALUE_RE.fullmatch(salt):
-        raise Fatal("/data/secrets/salt_key is not in the expected format; refusing to start")
+        raise Fatal("/data/secrets/salt_key is not in the expected format; refusing to start. " + SALT_RESTORE_HINT)
 
     master_opt = opts.get("master_key") or ""
     master = read_secret("master_key")
@@ -896,7 +900,7 @@ def cmd_scram_sql() -> int:
 def _salt() -> str:
     salt = read_secret("salt_key")
     if not salt or not SECRET_VALUE_RE.fullmatch(salt):
-        raise Fatal("/data/secrets/salt_key is missing or malformed")
+        raise Fatal("/data/secrets/salt_key is missing or malformed. " + SALT_RESTORE_HINT)
     return salt
 
 
