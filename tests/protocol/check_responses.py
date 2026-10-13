@@ -26,7 +26,7 @@ def payload(output):
             'status':'completed','output':output,'error':None,'incomplete_details':None,
             'usage':{'input_tokens':1,'output_tokens':1,'total_tokens':2}}
 
-def sse(empty=False, failure=False, incomplete=False, truncated=False):
+def sse(empty=False, failure=False, incomplete=False, truncated=False, top_error=False):
     events = [
         {'type':'response.output_text.done','output_index':0,'content_index':0,'item_id':'msg_test','text':'OK'},
         {'type':'response.output_item.done','output_index':0,'item':ITEM},
@@ -39,18 +39,20 @@ def sse(empty=False, failure=False, incomplete=False, truncated=False):
         events=events[:-1]
     if failure:
         events = [{'type':'response.failed','response':{'error':{'message':'synthetic provider failure','code':failure if isinstance(failure,str) else 'server_error'}}}]
+        if top_error:
+            events = [{'type':'error','sequence_number':0, **events[0]['response']['error'], 'param':None}]
     return ''.join('data: '+json.dumps(e)+'\n\n' for e in events)+'data: [DONE]\n\n'
 
 class ResponsesContract(unittest.TestCase):
     def exercise(self, *, asynchronous=False, stream=False, text_input=True,
-                 empty=False, failure=False, incomplete=False, truncated=False, provider='chatgpt', extra_body=None):
+                 empty=False, failure=False, incomplete=False, truncated=False, top_error=False, provider='chatgpt', extra_body=None):
         seen=[]
         def serve(request):
             body=json.loads(request.content); seen.append(body)
             if provider=='chatgpt':
                 self.assertIs(body['stream'], True)
                 self.assertIsInstance(body['input'],list)
-                return httpx.Response(200, text=sse(empty,failure,incomplete,truncated), headers={'content-type':'text/event-stream'})
+                return httpx.Response(200, text=sse(empty,failure,incomplete,truncated,top_error), headers={'content-type':'text/event-stream'})
             return httpx.Response(200,json=payload([ITEM]))
         transport=httpx.MockTransport(serve)
         log=Logging(model='gpt-6-luna',messages=[],stream=stream,call_type='responses',
@@ -120,6 +122,15 @@ class ResponsesContract(unittest.TestCase):
         for asynchronous in (False,True):
             with self.subTest(asynchronous=asynchronous):
                 self.exercise(asynchronous=asynchronous,incomplete=True,empty=True)
+
+    def test_standard_top_level_error_event(self):
+        for asynchronous in (False,True):
+            with self.subTest(asynchronous=asynchronous):
+                with self.assertRaises(Exception) as error:
+                    self.exercise(asynchronous=asynchronous,failure='rate_limit_exceeded',top_error=True)
+                self.assertEqual(error.exception.status_code,429)
+                self.assertEqual(error.exception.body['code'],'rate_limit_exceeded')
+                self.assertEqual(error.exception.body['message'],'synthetic provider failure')
 
     def test_truncated_stream_is_sanitized_502(self):
         for asynchronous in (False,True):

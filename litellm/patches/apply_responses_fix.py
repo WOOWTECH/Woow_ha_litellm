@@ -48,6 +48,8 @@ RESPONSE_EDITS = (
      '                    error_message = extracted_error',
      '                from litellm.responses.streaming_iterator import _map_stream_error_to_exception\n'
      '                error_obj = parsed_chunk.get("error") or (parsed_chunk.get("response") or {}).get("error")\n'
+     '                if error_obj is None and event_type == ResponsesAPIStreamEvents.ERROR:\n'
+     '                    error_obj = {key: parsed_chunk.get(key) for key in ("message", "code", "param")}\n'
      '                raise _map_stream_error_to_exception(error_obj, model, "chatgpt")', 1),
 )
 
