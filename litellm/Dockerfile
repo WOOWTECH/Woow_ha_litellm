@@ -106,6 +106,8 @@ RUN python -I /usr/share/woow-litellm/patches/apply_responses_fix.py \
 # API01/API07/API23: source-hash-guarded, independent of provider and plugin patches.
 RUN python -I /usr/share/woow-litellm/patches/apply_api_compat.py
 RUN python -I /usr/share/woow-litellm/patches/apply_security_headers.py
+# Addon-local restore error contract; canonical plugin copy and lock stay unchanged.
+RUN python -I /usr/share/woow-litellm/patches/apply_restore_fix.py
 
 ARG BUILD_VERSION=0.1.3
 ARG BUILD_REF=unknown
