@@ -46,6 +46,9 @@ class RequireExecutedTests:
     def __init__(self):
         self.skipped = 0
 
+    def pytest_collectreport(self, report):
+        self.skipped += int(report.skipped)
+
     def pytest_runtest_logreport(self, report):
         self.skipped += int(report.skipped)
 

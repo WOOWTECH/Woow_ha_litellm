@@ -101,3 +101,35 @@ def test_empty_or_skipped_suite_is_not_green():
     session.testscollected=1;session.exitstatus=0;plugin.skipped=1
     plugin.pytest_sessionfinish(session,0)
     assert session.exitstatus==1
+
+
+@pytest.mark.parametrize('mode,expected',[
+    ('pass',0), ('empty',1), ('runtime_skip',1), ('collection_skip',1),
+    ('collection_error',2), ('runtime_error',1),
+])
+def test_real_pytest_events_enforce_execution_guards(tmp_path,mode,expected):
+    """Exercise real collection and runtest reports, including mixed pass + skip."""
+    import sys
+    contracts=tmp_path/'contracts';contracts.mkdir()
+    if mode!='empty':
+        (contracts/'test_pass.py').write_text('def test_pass(): assert True\n')
+    additional={
+        'runtime_skip': 'import pytest\ndef test_skip(): pytest.skip("fixture runtime skip")\n',
+        'collection_skip': 'import pytest\npytest.skip("fixture collection skip", allow_module_level=True)\n',
+        'collection_error': 'raise ImportError("fixture collection failure")\n',
+        'runtime_error': 'def test_failure(): assert False, "fixture failure"\n',
+    }
+    if mode in additional:
+        (contracts/'test_negative.py').write_text(additional[mode])
+    runner=tmp_path/'run_guard.py'
+    runner.write_text("""import importlib.util,sys
+import pytest
+spec=importlib.util.spec_from_file_location('api_harness',sys.argv[1])
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+raise SystemExit(pytest.main(['-q','-p','no:cacheprovider','--confcutdir='+sys.argv[2],sys.argv[2]],plugins=[m.RequireExecutedTests()]))
+""")
+    result=subprocess.run([sys.executable,'-I','-B',str(runner),str(HARNESS/'run_image_contracts.py'),str(contracts)],
+        env={**os.environ,'PYTEST_DISABLE_PLUGIN_AUTOLOAD':'1'},capture_output=True,text=True,timeout=30)
+    assert result.returncode==expected,result.stdout+result.stderr
+    if mode in ('runtime_skip','collection_skip'):
+        assert '1 passed, 1 skipped' in result.stdout
