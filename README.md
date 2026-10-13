@@ -1,6 +1,6 @@
 # Woow LiteLLM（Home Assistant add-on）
 
-**狀態：內部測試版 0.1.3（experimental）。**
+**狀態：內部測試版 0.1.4（experimental）。**
 
 > **非公開散布**：映像（`ghcr.io/woowtech/woow-ha-litellm-amd64`）是 GHCR 的私人 package，只供 WOOWTECH
 > 自有的 Home Assistant 主機使用（負責人 2026-10-09 決定）。映像直接以 BerriAI 官方的 `litellm-non_root`

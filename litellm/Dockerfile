@@ -109,7 +109,7 @@ RUN python -I /usr/share/woow-litellm/patches/apply_security_headers.py
 # Addon-local restore error contract; canonical plugin copy and lock stay unchanged.
 RUN python -I /usr/share/woow-litellm/patches/apply_restore_fix.py
 
-ARG BUILD_VERSION=0.1.3
+ARG BUILD_VERSION=0.1.4
 ARG BUILD_REF=unknown
 ARG BUILD_ARCH=amd64
 # CI supplies the actual UTC build time; do not inherit the base image creation date.
