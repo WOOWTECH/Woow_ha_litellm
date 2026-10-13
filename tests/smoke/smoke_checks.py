@@ -52,6 +52,27 @@ class Resp:
         return self.body.decode("utf-8", "replace")
 
 
+def ingress_csp_valid(values):
+    # Duplicate fields and comma-separated policies enforce independently.
+    # Require all three directives; a separate framing denial cannot be hidden
+    # by an earlier 'self' policy. CSP uses the first duplicate within a policy.
+    required = {'frame-ancestors': ["'self'"], 'object-src': ["'none'"], 'base-uri': ["'none'"]}
+    seen = set()
+    for value in values:
+        for policy in value.split(','):
+            directives = {}
+            for directive in policy.split(';'):
+                parts = directive.split()
+                if parts:
+                    directives.setdefault(parts[0].lower(), parts[1:])
+            for name, expected in required.items():
+                if name in directives:
+                    if directives[name] != expected:
+                        return False
+                    seen.add(name)
+    return seen == set(required)
+
+
 def req(method, url, body=None, headers=None, timeout=60) -> Resp:
     u = urlsplit(url)
     conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=timeout)
@@ -210,8 +231,8 @@ def ingress():
     html = r.text
     check("b/ingress /ui/ → 200 HTML", r.status == 200 and "text/html" in (r.header("content-type") or ""), r.status)
     check("b/ingress X-Frame-Options → SAMEORIGIN", r.header("x-frame-options") == "SAMEORIGIN", r.header("x-frame-options"))
-    csp = r.header("content-security-policy") or ""
-    check("b/ingress CSP frame-ancestors → 'self'", csp == "frame-ancestors 'self'", csp)
+    csp = r.all("content-security-policy")
+    check("b/ingress CSP self framing and object/base restrictions", ingress_csp_valid(csp), csp)
     check("b/ingress HTML has no /litellm-asset-prefix left", "/litellm-asset-prefix" not in html)
     tag = f'<script src="{ENTRY}/woow/chatgpt/ui-bridge.js" defer></script>'
     check("b/bridge <script> URL carries the prefix", tag in html, re.findall(r"<script[^>]*ui-bridge[^>]*>", html))
@@ -227,8 +248,8 @@ def ingress():
     check("b/ingress ui-bridge.js → 200", r.status == 200 and "__woowChatgptBridge" in r.text, r.status)
     r = req("GET", f"{base}/woow/chatgpt")
     check("b/ingress plugin page /woow/chatgpt → 200", r.status == 200, r.status)
-    check("b/ingress plugin page keeps SAMEORIGIN / 'self'", r.header("x-frame-options") == "SAMEORIGIN"
-          and r.header("content-security-policy") == "frame-ancestors 'self'",
+    check("b/ingress plugin page keeps SAMEORIGIN and hardened CSP", r.header("x-frame-options") == "SAMEORIGIN"
+          and ingress_csp_valid(r.all("content-security-policy")),
           f"{r.header('x-frame-options')} | {r.header('content-security-policy')}")
     check("b/ingress plugin API without key → 401", req("GET", f"{base}/woow/chatgpt/api/accounts").status == 401)
     r = req("GET", f"{base}/woow/chatgpt/api/accounts", headers=bearer(MASTER))

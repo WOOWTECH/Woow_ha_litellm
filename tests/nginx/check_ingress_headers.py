@@ -95,7 +95,10 @@ class IngressHeaders(unittest.TestCase):
         source = source.replace('@INGRESS_ENTRY@', ENTRY).replace('listen 8099', f'listen 127.0.0.1:{cls.port}')
         source = source.replace('172.30.32.2', '127.0.0.1').replace('127.0.0.1:4000', f'127.0.0.1:{cls.upstream.server_port}')
         (root/'site.conf').write_text(source)
-        (root/'nginx.conf').write_text(f'''daemon off;
+        # The image has woow-nginx but need not have nginx's compiled default user.
+        # This disposable single-process fixture uses root, never product config.
+        (root/'nginx.conf').write_text(f'''user root root;
+daemon off;
 master_process off;
 pid {root}/nginx.pid;
 error_log {root}/error.log warn;
