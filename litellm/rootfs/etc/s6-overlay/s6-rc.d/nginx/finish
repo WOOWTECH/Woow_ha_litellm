@@ -1,0 +1,4 @@
+#!/bin/sh
+# Keep the API available while s6 retries the independently supervised Ingress proxy.
+echo "[woow-litellm] nginx: exited with code ${1:-0}, signal ${2:-0}; s6 manages restart" >&2
+exit 0

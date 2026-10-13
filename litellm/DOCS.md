@@ -1,6 +1,6 @@
 # Woow LiteLLM
 
-> **測試版（experimental）**：尚未正式發佈，設定與資料格式在 0.1.x 期間仍可能調整。
+> **測試版（experimental）**：已提供內部版本，設定與資料格式在 0.1.x 期間仍可能調整。
 
 > **非公開散布**：本 add-on 只供 WOOWTECH 自有的 Home Assistant 主機使用。映像放在 GHCR 的**私人** package
 > （`ghcr.io/woowtech/woow-ha-litellm-amd64`），安裝前要先在 Supervisor 設定 `ghcr.io` 的唯讀憑證
@@ -33,17 +33,17 @@ LiteLLM 版本與 Woow PaaS 相同（1.104.0），一起升版；也帶同一套
 步驟：
 
 1. 以服務帳號建立上述 classic token（只有 `read:packages`、不設到期）。
-2. 在 HA 加入憑證：設定 → 附加元件 → 附加元件商店 → 右上角選單 →「Registries」→ 新增，
+2. 在 HA 加入憑證：設定 → 應用程式 → 安裝應用程式 → 右上角選單 →「Registries」→ 新增，
    伺服器 `ghcr.io`、使用者名稱填服務帳號、密碼填權杖；或在 HA 的終端機執行
-   `ha registries add ghcr.io --username <服務帳號> --password <權杖>`（CLI 版本較舊時為 `ha docker registries add …`）。
+   `ha docker registries add ghcr.io --username <服務帳號> --password <權杖>`（CLI 2026.09.0）。
 3. **設好後立刻試拉兩支公開映像，確認沒有被擋**（例如在 HA 終端機或有 Docker 的主機上，以同一組憑證）：
    - HA 的基底映像 `ghcr.io/home-assistant/amd64-base`；
    - 任一支已安裝的 Woow MCP 映像，例如 `ghcr.io/woowtech/amd64-mcp-odoo`。
    兩者都要拉得到；任何一個失敗就先回復（見下）再查原因。
-4. 加入本 repository（不在 Woow 商店上架）：設定 → 附加元件 → 附加元件商店 → 右上角選單 →「Repositories」，
+4. 加入本 repository（不在 Woow 商店上架）：設定 → 應用程式 → 安裝應用程式 → 右上角選單 →「Repositories」，
    加入 `https://github.com/WOOWTECH/Woow_ha_litellm`，再從商店清單安裝 Woow LiteLLM。
 
-**出事時回復**：在 HA 終端機執行 `ha registries remove ghcr.io`（CLI 版本較舊時為 `ha docker registries remove ghcr.io`），HA 自身與公開的 add-on 會回到匿名拉取；
+**出事時回復**：在 HA 終端機執行 `ha docker registries remove ghcr.io`，HA 自身與公開的 add-on 會回到匿名拉取；
 Woow LiteLLM 之後就無法更新或重新安裝，直到憑證修好為止。
 
 ## 第一次啟動
@@ -57,17 +57,24 @@ Woow LiteLLM 之後就無法更新或重新安裝，直到憑證修好為止。
 **後台帳號**預設 `admin`；**後台密碼**與 **master key** 在 Home Assistant 2026.5.0、Supervisor 2026.07.0
 以上時，會自動寫回 add-on 的「設定」分頁（只寫一次）。只有 HA 管理員看得到設定分頁。
 
-- 寫回後想讓設定裡不留秘密：抄下來之後清空欄位即可，之後不會再寫回；值仍保存在 `/data/secrets`。
+- 建議抄下後清空 `master_key` 與 `ui_password`，之後不會再寫回；值仍保存在 `/data/secrets`。
+  Supervisor 選項驗證失敗時，錯誤橫幅與 Supervisor log 可能帶出整份選項。分享前請遮蔽秘密；若已外流，請換值並重啟。
 - 要換 master key 或後台密碼：在設定填新的值並重新啟動。所有後台登入會被登出。
 - **salt key 永遠不會顯示、也不能更換**：它加密了你存在 LiteLLM 裡的所有 provider 金鑰。遺失就只能從備份還原。
 
 ## 側邊欄
 
-側邊欄的「LiteLLM」直接開啟 LiteLLM 管理介面，用上面的後台帳號密碼登入（登入有效 4 小時，可在設定調整）。
+側邊欄的「LiteLLM」直接開啟 LiteLLM 管理介面，用上面的後台帳號密碼登入（HA 預設登入有效 4 小時，Woow PaaS 預設 24 小時；可在設定調整）。
 
 - 某次開機若在 60 秒內取不到側邊欄位址，那次會改顯示說明頁；**重新啟動 add-on** 即可恢復。
 - 安全提醒：側邊欄與 HA 前端同源，HA 前端上的其他腳本（自訂卡片、其他 add-on 的頁面）理論上讀得到後台登入。
   請只安裝可信任的自訂元件與 add-on；需要長時間操作時改用區網或 Cloudflare Tunnel 開啟。
+
+- Ingress 單次請求上限為 **16 MiB**；含圖片或檔案的較大請求請改用受保護的 API 連線。
+- 建議在應用程式資訊頁開啟 **Watchdog**。容器健康檢查會同時檢查 LiteLLM 與 nginx，並保留啟動寬限期。
+- 經 Cloudflare Tunnel 或 LAN userland-proxy 的使用者可能共用來源 IP，因此共用登入節流額度；
+  重複輸入錯誤密碼可能暫時影響其他人的登入。請等待節流解除，不要停用登入節流。
+- 手機畫面狹窄時，先關閉提示橫幅、收合側欄；表格操作可改用橫向或桌面。
 
 ## 給同一台 HA 的其他 add-on
 
@@ -87,17 +94,21 @@ OpenAI 相容端點在 `/v1`。**請在 LiteLLM 為每個用途建立虛擬 key*
 或打開 `/woow/chatgpt`，用 ChatGPT Plus／Pro 帳號登入後就能把 ChatGPT 的模型加進 LiteLLM。可以連多個帳號。
 
 - 登入資料放在記憶體（tmpfs），資料庫另存一份，重新啟動不會登出。
-- 同一個 ChatGPT 帳號可以在 Woow PaaS 與這裡各自登入；但**不要把這裡的備份還原到第二台主機繼續用**，
-  兩邊會共用同一個登入而互相登出。
+- 一個 ChatGPT 帳號建議只連一個地方（Woow PaaS 或這裡擇一）；各自登入能否長期並存尚未確認。
+  **不可把備份或 dump 還原到第二台並同時使用**，因為兩邊會共用輪替的 refresh token。
+- 訂閱模型的 cost 記為 **0**；金額預算不能限制訂閱用量，請使用 RPM／TPM 限流與模型權限控制。
 - 關掉 `chatgpt_subscription` 不會刪除已連線的帳號；要刪請先在 ChatGPT 訂閱頁中斷連線。
 - 已知小問題：從區網不帶前綴直接開 `/woow/chatgpt` 時，「回 LiteLLM 後台」連結會 404；從後台進入則正常。
 
 ## 備份與還原
 
 - 備份方式是冷備份：HA 備份時會先停止 add-on（約 1–2 分鐘），再打包 `/data`。每天的自動備份都會造成這段停機。
+- 請在 HA 設定每日自動備份、確認包含本應用程式，並保留一份離機／異地副本；add-on 不會自動替 HA 建立排程。
 - 備份內含 master key、salt key、資料庫與 ChatGPT 訂閱的登入：**請使用 HA 的加密備份**。
 - 還原後每次開機都會自動修正檔案擁有者與權限。
-- LiteLLM 換版前會自動 `pg_dump` 到 `/data/pre-upgrade-dumps`（保留 2 份，不進 HA 備份）。dump 失敗就不會升級資料庫。
+- LiteLLM 換版前會自動 `pg_dump` 到 `/data/pre-upgrade-dumps`（保留 2 份，不進 HA 備份）。資料庫狀態查詢、dump 或 migration 失敗／逾時都不會繼續啟動 API。
+  中斷的暫存 dump 會在停止或下次啟動時清除；完整 dump 保留兩份。
+- 升級後首次啟動可能需要數分鐘。停止會先中斷啟動子程序，再停止 PostgreSQL；不要以強制斷電代替正常停止。
 - 不支援只降映像版本（資料庫 migration 只能往前）；要回退請還原 HA 備份。
 - **解除安裝會刪除所有資料（金鑰與資料庫），無法復原。**
 
@@ -107,7 +118,7 @@ OpenAI 相容端點在 `/v1`。**請在 LiteLLM 為每個用途建立虛擬 key*
 |---|---|---|
 | `master_key` | 空白 | 空白＝沿用已存的值；填 `sk-…` 換新的 |
 | `ui_username` | `admin` | 後台帳號 |
-| `ui_password` | 空白 | 空白＝沿用已存的值；至少 12 字 |
+| `ui_password` | 空白 | 空白＝沿用已存的值；至少 12 字，前後不可有空白 |
 | `ui_session_duration` | `4h` | 後台登入有效時間，1h–24h |
 | `log_level` | `warning` | `error` 或 `warning`；網址一律不寫進記錄 |
 | `spend_logs_retention` | `30d` | 用量紀錄保留期間 |
@@ -115,7 +126,7 @@ OpenAI 相容端點在 `/v1`。**請在 LiteLLM 為每個用途建立虛擬 key*
 | `password_breach_check` | 開 | 後台資料庫使用者的密碼是否檢查外洩（HIBP k-anonymity） |
 | `chatgpt_subscription` | 開 | ChatGPT 訂閱外掛 |
 | `api_docs` | 關 | `/docs` 等 API 文件頁 |
-| `env_vars` | 無 | 額外的環境變數；add-on 自己控制的變數會被拒絕 |
+| `env_vars` | 無 | 額外的環境變數；不可空值、換行、結尾空格／tab，最多 4095 bytes；啟動摘要只列名稱 |
 
 ## 不支援的功能
 
@@ -127,3 +138,15 @@ OpenAI 相容端點在 `/v1`。**請在 LiteLLM 為每個用途建立虛擬 key*
 
 寫回設定分頁時：HA 管理員、HA Core 與在 Core 內執行的自訂整合、角色為 manager 或 admin 的 add-on、
 能取得 HA 備份的人。沒寫回時：仍可經 HA 備份取得。所以只安裝可信任的自訂整合與 add-on，並使用加密備份。
+
+
+`env_vars` 不可覆寫 add-on 的金鑰、資料庫、設定檔／雲端設定桶、TLS 路徑、登入節流、worker 與監聽埠。
+HA 設定頁的格式驗證不等於啟動驗證；保留字、cron 語意與無法原樣傳遞的值會在啟動時被拒絕，訊息會指出欄位。
+PostgreSQL 使用 UTC 時間且不記錄例行 checkpoint；LiteLLM 的清理排程依 HA 時區。
+未帶 API key 的請求可能留下 LiteLLM 上游的 ERROR／traceback，但 HTTP 回應仍是 401。
+
+## 求助與授權
+
+請向 WOOWTECH 維護者或 [GitHub issues](https://github.com/WOOWTECH/Woow_ha_litellm/issues) 提供
+add-on／LiteLLM／HA 版本、重現步驟與已遮蔽的記錄。不要附金鑰、登入權杖、完整 options 或未加密備份。
+本 add-on 的授權見 [LICENSE](LICENSE)；映像所含第三方軟體依各自授權，LiteLLM enterprise 功能仍需相應授權。

@@ -12,7 +12,7 @@ configuration:
     name: 後台密碼
     description: >-
       留空會沿用已存的密碼（第一次啟動自動產生，並比照 master key 寫回這裡一次）。至少 12 個字元。
-      更改並重新啟動後，所有後台登入會被登出。
+      前後不可有空白。更改並重新啟動後，所有後台登入會被登出。
   ui_session_duration:
     name: 後台登入有效時間
     description: 後台登入一次可以用多久，1h 到 24h（預設 4h）。
@@ -37,8 +37,8 @@ configuration:
     name: ChatGPT 訂閱
     description: >-
       讓 LiteLLM 用 ChatGPT Plus／Pro 訂閱的額度（與 Woow PaaS 相同的功能）。關掉後不會刪除已連線的帳號；
-      要刪請先在 ChatGPT 訂閱頁中斷連線。同一個 ChatGPT 帳號可以在 PaaS 與這裡各自登入，但不要把備份還原到
-      第二台主機繼續用。
+      要刪請先在 ChatGPT 訂閱頁中斷連線。一個帳號建議只連一處（PaaS 或這裡擇一）；各自登入能否長期並存
+      尚未確認。不可把備份複製到另一台繼續用，因為會共用輪替的登入權杖。
   api_docs:
     name: API 文件頁
     description: >-
@@ -47,6 +47,13 @@ configuration:
     name: 環境變數
     description: >-
       額外給 LiteLLM 的環境變數。add-on 自己設定的變數（金鑰、資料庫、路徑、ChatGPT 外掛、S6_、PRISMA_ 等）
-      會被拒絕。
+      以及登入節流設定會在啟動時被拒絕。啟動摘要只列名稱、不印值；值仍存在設定與備份，請使用加密備份。
+    fields:
+      key:
+        name: 變數名稱
+        description: 使用大寫英文字母、數字與底線；不可覆寫 add-on 管理的設定。
+      value:
+        name: 值
+        description: 不可空白或換行，最多 4095 bytes，結尾不可有空格或 tab；要取消請刪除整列。
 network:
   4000/tcp: LiteLLM API 與管理介面（區網為 HTTP 明文；要 HTTPS 請用 Cloudflare Tunnel）。預設不開。

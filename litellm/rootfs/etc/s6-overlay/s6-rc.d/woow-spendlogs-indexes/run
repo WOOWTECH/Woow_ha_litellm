@@ -1,0 +1,4 @@
+#!/bin/sh
+# Long startup work must never hold the s6-rc state transition lock.
+exec 2>&1
+exec /app/.venv/bin/python -I /usr/local/lib/woow-litellm/woow_service.py indexes

@@ -71,13 +71,16 @@ RESERVED_ENV = frozenset(
         "LITELLM_UI_SESSION_DURATION", "UI_USERNAME", "UI_PASSWORD", "PROXY_BASE_URL", "PORT", "HOST",
         "NUM_WORKERS", "LITELLM_MODE", "CHECKPOINT_DISABLE", "DOCS_URL", "NO_DOCS", "NO_REDOC",
         "NO_OPENAPI", "CHATGPT_TOKEN_DIR", "PYTHONPATH", "PATH", "HOME", "TZ",
+        "CONFIG_FILE_PATH", "WORKER_CONFIG", "SSL_KEYFILE_PATH", "SSL_CERTFILE_PATH",
+        "LITELLM_DISABLE_LOGIN_RATE_LIMIT", "MAX_REQUESTS_BEFORE_RESTART",
+        "MAX_REQUESTS_BEFORE_RESTART_JITTER", "PROMETHEUS_METRICS_PORT",
     }
 )
 RESERVED_PREFIXES = (
     "DATABASE_", "LITELLM_EXPIRED_UI_SESSION_KEY_CLEANUP_", "LITELLM_PGBOUNCER_", "LITELLM_DANGEROUSLY_",
     "CHATGPT_", "WOOW_", "PRISMA_", "PYTHON", "LD_", "S6_", "SUPERVISOR_", "HASSIO_",
+    "LITELLM_CONFIG_BUCKET_", "GRANIAN_",
 )
-SENSITIVE_MARKERS = ("KEY", "SECRET", "PASS", "TOKEN")
 
 DEFAULT_OPTIONS = {
     "ui_username": "admin",
@@ -221,10 +224,6 @@ def fingerprint(purpose: str, value: str, length: int = 32) -> str:
 
 def salt_fingerprint(salt: str) -> str:
     return fingerprint("salt", salt, 16)
-
-
-def mask(key: str, value: str) -> str:
-    return "******" if any(m in key.upper() for m in SENSITIVE_MARKERS) else value
 
 
 # ── perms (§9.2, §7.1 init-woow-perms) ───────────────────────────────────────
@@ -376,6 +375,8 @@ def validate_options(opts: dict) -> list[str]:
             errors.append("ui_password: must be 12 to 256 characters")
         elif any(c in ui_password for c in "\n\r\x00"):
             errors.append("ui_password: must be a single line")
+        elif ui_password != ui_password.strip():
+            errors.append("ui_password: must not start or end with whitespace")
     if not isinstance(opts.get("ui_username"), str) or not USERNAME_RE.fullmatch(opts["ui_username"]):
         errors.append("ui_username: 1–64 letters, digits, _ . @ -")
     if not isinstance(opts.get("ui_session_duration"), str) or not DURATION_RE.fullmatch(opts["ui_session_duration"]):
@@ -410,6 +411,8 @@ def validate_options(opts: dict) -> list[str]:
                 errors.append(f"env_vars[{i}]: {key} is listed twice")
             elif any(c in item["value"] for c in "\n\r\x00"):
                 errors.append(f"env_vars[{i}]: the value of {key} must be a single line")
+            if not item["value"] or item["value"] != item["value"].rstrip(" \t") or len(item["value"].encode()) > 4095:
+                errors.append(f"env_vars[{i}]: {key} must be nonempty, at most 4095 bytes, with no trailing space or tab")
             seen.add(key)
     return errors
 
@@ -439,6 +442,8 @@ def write_envdir(service: str, values: dict[str, str], replace: bool = True) -> 
             raise Fatal(f"internal: bad variable name {key!r}")
         if any(c in value for c in "\n\x00"):
             raise Fatal(f"internal: {key} has a multi-line value")
+        if not value or value != value.rstrip(" \t") or len(value.encode()) > 4095:
+            raise Fatal(f"internal: {key} cannot be represented losslessly by s6-envdir")
         write_file(os.path.join(path, key), value, 0o600)
 
 
@@ -535,7 +540,7 @@ def cmd_env() -> int:
     write_envdir("litellm-migrate", migrate)
     ensure_dir(P.litellm_run, 0o750, 0, LITELLM_GID)
     write_file(P.litellm_config, litellm_config(opts), 0o640, 0, LITELLM_GID)
-    shown = ", ".join(f"{i['key']}={mask(i['key'], i['value'])}" for i in opts["env_vars"]) or "none"
+    shown = ", ".join(i["key"] for i in opts["env_vars"]) or "none"
     log(
         step,
         f"options ok (log_level={opts['log_level']}, session={opts['ui_session_duration']}, "
@@ -624,8 +629,8 @@ def cmd_secrets() -> int:
         "DATABASE_URL": database_url(pg_password),
         "UI_PASSWORD": ui_password,
     }
-    for service in ("litellm", "litellm-migrate"):
-        write_envdir(service, values, replace=False)
+    write_envdir("litellm", values, replace=False)
+    write_envdir("litellm-migrate", {"DATABASE_URL": values["DATABASE_URL"]}, replace=False)
     log(step, ("generated or updated: " + ", ".join(made)) if made else "using the stored secrets")
     return 0
 

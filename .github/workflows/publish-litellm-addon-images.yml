@@ -108,6 +108,7 @@ jobs:
         run: |
           docker buildx build --platform linux/amd64 --pull --no-cache --provenance=false --sbom=false \
             --build-arg BUILD_VERSION="${VERSION}" --build-arg BUILD_REF="${GITHUB_SHA}" --build-arg BUILD_ARCH=amd64 \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --load -t "${IMAGE}:${VERSION}" litellm
       - name: offline Responses protocol regressions
         run: |
