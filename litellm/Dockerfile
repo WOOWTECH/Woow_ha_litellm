@@ -103,7 +103,7 @@ COPY rootfs/ /
 COPY patches/ /usr/share/woow-litellm/patches/
 RUN python -I /usr/share/woow-litellm/patches/apply_responses_fix.py
 
-ARG BUILD_VERSION=0.1.1
+ARG BUILD_VERSION=0.1.2
 ARG BUILD_REF=unknown
 ARG BUILD_ARCH=amd64
 # CI supplies the actual UTC build time; do not inherit the base image creation date.

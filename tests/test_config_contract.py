@@ -47,7 +47,7 @@ def test_prebuilt_image_only():
 def test_version_everywhere():
     v = CONFIG["version"]
     assert json.loads((SHARE / "build-info.json").read_text())["addon_version"] == v
-    assert re.search(rf"^## {re.escape(v)}\b", (ADDON / "CHANGELOG.md").read_text(), re.M)
+    assert re.search(rf"^## \[{re.escape(v)}\] - \d{{4}}-\d{{2}}-\d{{2}}$", (ADDON / "CHANGELOG.md").read_text(), re.M)
     assert f"ARG BUILD_VERSION={v}" in DOCKERFILE
 
 
