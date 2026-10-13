@@ -536,6 +536,10 @@ def cmd_env() -> int:
             log(step, f"invalid option: {err}")
         raise Fatal("fix the options in the add-on's Configuration tab and start it again")
     write_envdir("litellm", litellm_env(opts))
+    # Root-owned tmpfs policy: disabling the plugin must also exclude persisted
+    # subscription deployments before upstream Router initialization can auto-login.
+    write_file(os.path.join(P.run, "chatgpt-subscription"),
+               "enabled\n" if opts["chatgpt_subscription"] else "disabled\n", 0o644)
     migrate = base_env(opts)  # never PYTHONPATH, SERVER_ROOT_PATH, ROOT_REDIRECT_URL or WOOW_* (§7.1)
     write_envdir("litellm-migrate", migrate)
     ensure_dir(P.litellm_run, 0o750, 0, LITELLM_GID)
