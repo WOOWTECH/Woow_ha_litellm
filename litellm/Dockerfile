@@ -99,7 +99,11 @@ ENV CHECKPOINT_DISABLE=1 \
 # The add-on (s6 services, init, nginx, help page, Woow plugin copy).
 COPY rootfs/ /
 
-ARG BUILD_VERSION=0.1.0
+# Reviewed compatibility fix; refuses drift from the pinned upstream files.
+COPY patches/ /usr/share/woow-litellm/patches/
+RUN python -I /usr/share/woow-litellm/patches/apply_responses_fix.py
+
+ARG BUILD_VERSION=0.1.1
 ARG BUILD_REF=unknown
 ARG BUILD_ARCH=amd64
 LABEL org.opencontainers.image.title="Woow LiteLLM" \

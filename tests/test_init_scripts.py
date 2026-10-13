@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from conftest import DEFAULT_OPTIONS
+from conftest import ADDON, DEFAULT_OPTIONS
 
 ENTRY = "/api/hassio_ingress/AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcde"
 
@@ -468,7 +468,8 @@ def test_state_migrated(box):
     assert box.ok("state-get", "litellm_version").stdout.strip() == ""
     box.ok("state-migrated")
     assert box.ok("state-get", "litellm_version").stdout.strip() == "1.104.0"
-    assert box.state()["addon_version"] == "0.1.0"
+    import yaml
+    assert box.state()["addon_version"] == yaml.safe_load((ADDON / "config.yaml").read_text())["version"]
     assert mode(box.data / "woow" / "state.json") == 0o600
 
 

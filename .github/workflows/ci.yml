@@ -75,6 +75,10 @@ jobs:
           echo "build took $(( $(date +%s) - start ))s"
           docker image inspect -f 'id={{.Id}} size={{.Size}} layers={{len .RootFS.Layers}}' woow-litellm:ci
           docker history --format '{{.Size}}\t{{.CreatedBy}}' woow-litellm:ci | head -n 8 | cut -c1-160
+      - name: offline Responses protocol regressions
+        run: |
+          docker run --rm --network none --entrypoint python \
+            -v "$PWD/tests/protocol:/protocol:ro" "woow-litellm:ci" /protocol/check_responses.py
       - name: image facts
         run: tools/ci-image-facts.sh woow-litellm:ci
       - name: playwright (headless Chromium for the browser check)
