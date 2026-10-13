@@ -12,7 +12,7 @@ COMMIT = '73e198e81754126465a92bace206c56833f45664'
 TARGET = 'proxy/middleware/security_headers_middleware.py'
 PAYLOAD_SHA = '7eae4c58ca47b08600fef20ba0d72241a48bfa67571731ed611574b2072897c8'
 TEST_SHA = '8cf4ca6d59486c96d8c876ac7c0c85c463d10cba018a7004dedf8426656b0c89'
-TEST = Path('/security-contracts/test_headers.py')
+TEST = Path(__file__).resolve().with_name('test_headers.py')
 
 
 def require(ok, message):
