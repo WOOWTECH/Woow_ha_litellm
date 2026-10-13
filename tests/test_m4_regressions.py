@@ -219,3 +219,24 @@ def test_startup_stop_or_timeout_reaches_grandchildren(tmp_path, timeout):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+@pytest.mark.parametrize('boundary', ['unmask', 'handoff'])
+@pytest.mark.parametrize('signal_name', ['SIGTERM', 'SIGINT'])
+def test_startup_cancellation_owns_child_across_unmask(boundary, signal_name):
+    import sys
+    from pathlib import Path
+    fixture = Path(__file__).parent / 'fixtures/startup_signal_handoff.py'
+    result = subprocess.run([sys.executable, str(fixture), str(LIB / 'woow_service.py'),
+                             boundary, signal_name], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_startup_spawn_failure_restores_signal_mask(service, tmp_path):
+    before = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    try:
+        with pytest.raises(FileNotFoundError):
+            service.run_step([str(tmp_path / 'missing-startup-command')], 1)
+        assert signal.pthread_sigmask(signal.SIG_BLOCK, set()) == before
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)

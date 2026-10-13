@@ -54,23 +54,21 @@ def run_step(command, timeout):
     signals = {signal.SIGTERM, signal.SIGINT}
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, signals)
     child = None
+    # Keep ownership continuous across spawn, pending-signal delivery on unmask,
+    # and the handoff to wait. No exception after acquisition may orphan a child.
     try:
-        child = subprocess.Popen(command, start_new_session=True,
-            preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous))
-    finally:
         try:
+            child = subprocess.Popen(command, start_new_session=True,
+                preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous))
+        finally:
             signal.pthread_sigmask(signal.SIG_SETMASK, previous)
-        except Stopped:
-            if child is not None:
-                terminate_group(child)
-            raise
-    try:
         rc = child.wait(timeout=timeout)
         if rc:
             terminate_group(child)
         return rc
-    except (Stopped, subprocess.TimeoutExpired):
-        terminate_group(child)
+    except BaseException:
+        if child is not None:
+            terminate_group(child)
         raise
 
 
