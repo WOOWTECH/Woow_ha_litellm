@@ -64,3 +64,22 @@ exact `SupervisorAddonUpdateEntity.async_release_notes` extractor from HA Core
 2026.7.2 was executed locally: bracketed/date headings fall back to the whole log,
 while plain latest/installed headings return only the release interval. The new
 behavioral contract covers both cases, replacing the incorrect bracket-format test.
+
+
+## Ingress CSP and startup headers
+
+On the private Ingress listener only, the standalone default CSP policy
+`frame-ancestors 'none'` becomes `frame-ancestors 'self'`, including when nginx
+combines multiple upstream CSP fields into a comma-separated policy list. All
+other policies/directives retain their content and independent enforcement.
+Explicit compound policies are unchanged, including a compound policy that
+forbids framing; plugin `SAMEORIGIN` and nonce directives remain intact. This is
+not a blanket removal of upstream framing restrictions. Direct API headers are
+unchanged. The nginx-generated startup503 page also sends `nosniff`.
+
+`tests/nginx/check_ingress_headers.py` runs a real nginx against synthetic
+loopback responses, including duplicate CSP fields, nonce/plugin policies,
+explicit deny, and the local startup page. Container smoke runs it against the
+installed template, then the existing Chromium HA-panel check validates the
+actual app iframe. Optional `NGINX_BROWSER=1` adds local synthetic same-origin
+and cross-origin browser controls; neither fixture is a live-HA receipt.
