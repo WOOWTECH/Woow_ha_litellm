@@ -102,6 +102,8 @@ COPY rootfs/ /
 # Reviewed compatibility fix; refuses drift from the pinned upstream files.
 COPY patches/ /usr/share/woow-litellm/patches/
 RUN python -I /usr/share/woow-litellm/patches/apply_responses_fix.py
+# Addon-local restore error contract; canonical plugin copy and lock stay unchanged.
+RUN python -I /usr/share/woow-litellm/patches/apply_restore_fix.py
 
 ARG BUILD_VERSION=0.1.1
 ARG BUILD_REF=unknown
