@@ -245,6 +245,78 @@ class OutputRecoveryContract(unittest.TestCase):
             self.assertIn('Unknown', str(caught.exception))
             self.assertEqual(len(seen), 1)
 
+    def mixed_tool_events(self, *, added=True, argument_done=True):
+        tool = {**TOOL, 'status':'in_progress', 'arguments':''}
+        events = [text_event('delta', 'I will look that up.')]
+        if added:
+            events.append({'type':'response.output_item.added', 'output_index':1, 'item':tool})
+        events.append({'type':'response.function_call_arguments.delta', 'output_index':1,
+                       'item_id':TOOL['id'], 'delta':TOOL['arguments']})
+        if argument_done:
+            events.append({'type':'response.function_call_arguments.done', 'output_index':1,
+                           'item_id':TOOL['id'], 'arguments':TOOL['arguments'], 'name':TOOL['name']})
+        return events
+
+    def assert_unresolved_tool_refused(self, events, status='completed'):
+        for asynchronous in (False, True):
+            for collect in (False, True):
+                with self.subTest(asynchronous=asynchronous, collect=collect, status=status):
+                    with self.assertRaisesRegex(Exception, 'unresolved tool output') as caught:
+                        ResponsesContract().exercise(asynchronous=asynchronous, stream=collect,
+                            collect=collect, wire=wire(events, status=status),
+                            check_response=lambda response, log: self.bridge(response, log))
+                    self.assertNotIn('I will look that up.', str(caught.exception))
+                    self.assertNotIn(TOOL['arguments'], str(caught.exception))
+
+    def test_mixed_text_tool_without_item_done_refuses_partial_success(self):
+        self.assert_unresolved_tool_refused(self.mixed_tool_events())
+
+    def test_mixed_text_tool_missing_argument_done_refuses_partial_success(self):
+        self.assert_unresolved_tool_refused(self.mixed_tool_events(argument_done=False))
+
+    def test_tool_argument_events_without_added_refuse_partial_success(self):
+        for argument_done in (False, True):
+            with self.subTest(argument_done=argument_done):
+                self.assert_unresolved_tool_refused(self.mixed_tool_events(added=False, argument_done=argument_done))
+
+    def test_added_tool_without_arguments_refuses_partial_success(self):
+        self.assert_unresolved_tool_refused(self.mixed_tool_events()[:2])
+
+    def test_incomplete_with_unresolved_tool_refuses_partial_success(self):
+        self.assert_unresolved_tool_refused(self.mixed_tool_events(argument_done=False), status='incomplete')
+
+    def test_unrelated_done_item_cannot_resolve_observed_tool(self):
+        for wrong_tool, index in [({**TOOL, 'id':'fc_other'}, 1), (TOOL, 2)]:
+            with self.subTest(index=index, item_id=wrong_tool['id']):
+                self.assert_unresolved_tool_refused(self.mixed_tool_events() + [item_event(wrong_tool, index)])
+
+    def test_overwritten_tool_item_cannot_allow_partial_recovery(self):
+        events = self.mixed_tool_events() + [item_event(TOOL, 1), item_event(ITEM, 1)]
+        self.assert_unresolved_tool_refused(events)
+
+    def assert_mixed_tool_preserved(self, response, log):
+        self.assertEqual([item.type for item in response.output], ['message', 'function_call'])
+        result = self.bridge(response, log)
+        # Upstream emits text and accumulated tool calls as separate choices.
+        self.assertEqual([choice.finish_reason for choice in result.choices], ['stop', 'tool_calls'])
+        self.assertEqual(result.choices[0].message.content, response.output[0].content[0].text)
+        self.assertEqual(len(result.choices[1].message.tool_calls), 1)
+        call = result.choices[1].message.tool_calls[0]
+        self.assertEqual(call.id, TOOL['call_id'])
+        self.assertEqual(call.function.name, TOOL['name'])
+        self.assertEqual(call.function.arguments, TOOL['arguments'])
+
+    def test_matching_item_done_preserves_mixed_tool_without_argument_done(self):
+        events = self.mixed_tool_events(argument_done=False) + [item_event(TOOL, 1)]
+        self.run_paths(wire(events), self.assert_mixed_tool_preserved)
+
+    def test_authoritative_terminal_output_wins_over_unresolved_tool(self):
+        events = self.mixed_tool_events(argument_done=False)
+        self.run_paths(wire(events, output=[ITEM, TOOL]), self.assert_mixed_tool_preserved)
+        # An authoritative text-only terminal is also left untouched; the
+        # refusal applies only when rebuilding an empty terminal from events.
+        self.run_paths(wire(events, output=[ITEM]), self.text_is('OK'))
+
     def test_offline_network_and_process_guards(self):
         with self.assertRaises(PermissionError):
             socket.getaddrinfo('offline.invalid', 443)

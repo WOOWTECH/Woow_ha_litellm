@@ -120,7 +120,8 @@ RESPONSE_EDITS = (
         '                # providers that emit only OUTPUT_TEXT_DONE for some indices).\n'
         '                merged_items: dict[int, dict[str, object]] = {**text_only_output_items}\n'
         '                merged_items.update(streamed_output_items)\n',
-        '                merged_items = recovery.items()\n',
+        '                terminal = parsed_chunk.get("response")\n'
+        '                merged_items = recovery.items(terminal.get("output") if isinstance(terminal, dict) else None)\n',
         1,
     ),
 )

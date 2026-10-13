@@ -17,11 +17,37 @@ class OutputRecovery:
         self._text = {}
         self._deltas = {}
         self._done = set()
+        self._observed_tools = set()
+        self._resolved_tools = set()
+
+    def _observe_tool(self, event, item_id, tool_type, completed=False):
+        index = event.get('output_index')
+        valid = type(index) is int and index >= 0 and isinstance(item_id, str) and bool(item_id)
+        key = (index if type(index) is int else None,
+               item_id if isinstance(item_id, str) else None, tool_type)
+        self._observed_tools.add(key)
+        if completed and valid:
+            self._resolved_tools.add(key)
 
     def feed(self, event):
         if not isinstance(event, dict):
             event = event.model_dump(mode='json')
         kind = event.get('type')
+        if kind in ('response.output_item.added', 'response.output_item.done'):
+            item = event.get('item')
+            if isinstance(item, dict) and item.get('type') not in ('message', 'reasoning'):
+                complete = kind == 'response.output_item.done'
+                if item.get('type') == 'function_call':
+                    complete = complete and all(isinstance(item.get(field), str) and item[field]
+                                                for field in ('name', 'call_id'))
+                    complete = complete and isinstance(item.get('arguments'), str)
+                self._observe_tool(event, item.get('id'), item.get('type'), complete)
+        elif kind in ('response.function_call_arguments.delta', 'response.function_call_arguments.done'):
+            # Argument completion does not complete the output item. Do not
+            # guess tool metadata or silently return only the accompanying text.
+            self._observe_tool(event, event.get('item_id'), 'function_call')
+        elif kind in ('response.custom_tool_call_input.delta', 'response.custom_tool_call_input.done'):
+            self._observe_tool(event, event.get('item_id'), 'custom_tool_call')
         if kind == 'response.output_item.done':
             record_output_item_chunk(event, self._items)
         elif kind in ('response.output_text.done', 'response.output_text.delta'):
@@ -44,7 +70,14 @@ class OutputRecovery:
                 event = {**event, 'text': self._deltas[key]}
             record_output_text_chunk(event, self._items, self._text)
 
-    def items(self):
+    def items(self, terminal_output=None):
+        # A nonempty authoritative terminal needs no event-based reconstruction.
+        if terminal_output:
+            return {}
+        available = {(index, item.get('id'), item.get('type'))
+                     for index, item in self._items.items()}
+        if self._observed_tools - (self._resolved_tools & available):
+            raise ValueError('Cannot recover ChatGPT response with unresolved tool output')
         return {**self._text, **self._items}
 
     def restore(self, response):
