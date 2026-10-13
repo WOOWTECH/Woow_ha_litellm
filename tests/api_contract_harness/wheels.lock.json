@@ -1,0 +1,26 @@
+[
+  {
+    "name": "iniconfig",
+    "version": "2.3.1",
+    "filename": "iniconfig-2.3.1-py3-none-any.whl",
+    "sha256": "9121e2c1fdb355232495be3194c8dfe87ccc2d5dee45947b78e68f499790d7a7"
+  },
+  {
+    "name": "packaging",
+    "version": "26.3",
+    "filename": "packaging-26.3-py3-none-any.whl",
+    "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c"
+  },
+  {
+    "name": "pluggy",
+    "version": "1.6.0",
+    "filename": "pluggy-1.6.0-py3-none-any.whl",
+    "sha256": "e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746"
+  },
+  {
+    "name": "pytest",
+    "version": "8.3.4",
+    "filename": "pytest-8.3.4-py3-none-any.whl",
+    "sha256": "50e16d954148559c9a74109af1eaf0c945ba2d8f30f0a3d3335edde19788b6f6"
+  }
+]

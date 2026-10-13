@@ -12,7 +12,7 @@ python -m pytest -q tests/api_compat tests/test_api_compat_patch.py tests/test_c
 
 The first run is expected to fail on the observed compatibility bugs. The second
 run must pass. The patch validates the complete input and output SHA-256, the exact
-replacement count, and Python syntax for **all four files before writing any**.
+replacement count, and Python syntax for **all five files before writing any**.
 Applying twice intentionally fails closed. Do not repin around an unexpected hash:
 inspect the upstream change and rerun the regression tests.
 
@@ -45,13 +45,42 @@ The candidate Dockerfile invokes the new `apply_api_compat.py` after the existin
 Responses patch. Its upstream targets do not overlap the Responses recovery patch:
 
 - `proxy/_types.py`: keep internal-user route ACL templates aligned with path routing.
-- `proxy/proxy_server.py`: accept slash-bearing model IDs through existing auth/ACL.
+- `proxy/proxy_server.py`: accept slash-bearing IDs and preserve collection slash redirects.
+- `proxy/auth/auth_utils.py`: avoid Google action inference only for the actual dispatched
+  OpenAI model-info GET; retain the dedicated handler’s alias and model ACL checks.
 - `litellm_core_utils/streaming_handler.py`: clear choices only on final usage packets.
 - `proxy/common_request_processing.py`: remove zero-destroying truthiness fallbacks.
 
-This patch changes no Woow plugin file, auth implementation, license gate or SSE
+This patch changes no Woow plugin file, key verification or model ACL implementation, license gate or SSE
 recovery patch file. Both patch orders are expected to produce identical source.
 Run the sibling Responses protocol suite in **a separate pytest process**: it installs
 an intentional process-wide audit hook forbidding subprocesses, whereas repository
 config tests invoke `sh -n`. Mixing these suites would test the audit hook rather than
 shell syntax. Building/publishing/deploying a new image remains the integrator's step.
+
+## Required CI separation and image gate
+
+Lean CI installs no LiteLLM/httpx. Its command is explicitly:
+
+```sh
+pytest -q tests --ignore=tests/api_compat
+```
+
+No import-skips are used. Both `ci.yml` build-smoke and the publish workflow invoke
+`tools/ci-api-contracts.sh <already-built-image>` after build and before publication.
+It resolves an immutable local image ID, downloads **only four version/hash-locked
+pytest harness wheels** from PyPI, then runs that exact image with `--network none`,
+`--read-only`, no pull and only read-only test/harness mounts. No LiteLLM source or
+HTTP/ASGI dependency is copied from the checkout into the runtime. The temporary
+overlay consists exactly of pytest, pluggy, iniconfig and packaging; their versions
+and hashes are recorded, and they are not installed into the release image. The harness verifies
+all five patched image-source hashes against the candidate before collecting tests,
+rejects zero collected/skipped tests, and propagates any nonzero result. The image is
+not modified and is never exported to a public artifact. Pinned wheels are not part
+of the release image.
+
+An implementation/lean pass does not count as a built-image pass. A successful actual
+CI image gate is required before merge; publish independently repeats the same gate.
+The pre-existing multi-choice second-finish-reason gap is documented in the review
+receipts; original API-07 has no n>1 requirement, so this patch does not broaden the
+streaming core to address that unrelated behavior.

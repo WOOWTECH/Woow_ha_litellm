@@ -114,6 +114,8 @@ jobs:
         run: |
           docker run --rm --network none --entrypoint python \
             -v "$PWD/tests/protocol:/protocol:ro" "${IMAGE}:${VERSION}" /protocol/check_responses.py
+      - name: offline built-image API contracts
+        run: tools/ci-api-contracts.sh "${IMAGE}:${VERSION}"
       - name: image facts
         run: tools/ci-image-facts.sh "${IMAGE}:${VERSION}"
       - name: playwright (headless Chromium for the browser check)
