@@ -370,7 +370,8 @@ STUB
   start_addon "woow-stop-$step" -v "$stub:$mount_target:ro"
   started=false
   for _ in $(seq 1 120); do
-    if in_addon test -f /tmp/woow-m4-step; then started=true; break; fi
+    # The upstream venv has a broken executable named test; use the shell builtin.
+    if in_addon /bin/sh -c 'test -f /tmp/woow-m4-step'; then started=true; break; fi
     sleep 1
   done
   req "stop/$step: reached held startup step" test "$started" = true
