@@ -118,6 +118,8 @@ jobs:
         run: tools/ci-api-contracts.sh "${IMAGE}:${VERSION}"
       - name: offline installed security middleware contracts
         run: tools/ci-security-contracts.sh "${IMAGE}:${VERSION}"
+      - name: offline installed login security contracts
+        run: tools/ci-login-security-contracts.sh "${IMAGE}:${VERSION}"
       - name: image facts
         run: tools/ci-image-facts.sh "${IMAGE}:${VERSION}"
       - name: playwright (headless Chromium for the browser check)
