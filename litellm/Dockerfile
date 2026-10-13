@@ -105,8 +105,9 @@ RUN python -I /usr/share/woow-litellm/patches/apply_responses_fix.py \
  && python -I /usr/share/woow-litellm/patches/apply_subscription_policy.py
 # API01/API07/API23: source-hash-guarded, independent of provider and plugin patches.
 RUN python -I /usr/share/woow-litellm/patches/apply_api_compat.py
+RUN python -I /usr/share/woow-litellm/patches/apply_security_headers.py
 
-ARG BUILD_VERSION=0.1.2
+ARG BUILD_VERSION=0.1.3
 ARG BUILD_REF=unknown
 ARG BUILD_ARCH=amd64
 # CI supplies the actual UTC build time; do not inherit the base image creation date.
