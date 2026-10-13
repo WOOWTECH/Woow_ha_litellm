@@ -14,13 +14,18 @@ def deployment_enabled(params):
             value = get_secret(value)
         return value
 
-    model = resolved('model')
+    # Match pinned upstream precedence without invoking its authenticating resolver.
     provider = resolved('custom_llm_provider')
-    if provider != 'chatgpt' and not (isinstance(model, str) and model.startswith('chatgpt/')):
+    if provider:
+        is_subscription = provider == 'chatgpt'
+    else:
+        model = resolved('model')
+        is_subscription = isinstance(model, str) and model.startswith('chatgpt/')
+    if not is_subscription:
         return True
     # init-woow-env writes this root-owned tmpfs file before LiteLLM starts.
     # Missing/unreadable/invalid policy fails closed for subscription deployments.
     try:
-        return POLICY_PATH.read_text() == 'enabled\n'
-    except (OSError, UnicodeError):
+        return POLICY_PATH.read_bytes() == b'enabled\n'
+    except OSError:
         return False

@@ -75,15 +75,46 @@ class SubscriptionPolicyContract(unittest.TestCase):
         self.assertEqual(self.models, self.saved)
 
     def test_missing_and_invalid_policy_fail_closed(self):
-        for value in (None, 'true\n', 'enabled', ''):
+        for value in (None, b'true\n', b'enabled', b'', b'enabled\r\n', b'\xff'):
             with self.subTest(value=value):
                 if value is None:
                     self.policy.unlink(missing_ok=True)
                 else:
-                    self.policy.write_text(value)
+                    self.policy.write_bytes(value)
                 self.assertEqual(Router(model_list=self.models).model_list, [])
         self.assertEqual(self.login.call_count, 0)
         self.assertEqual(self.auth_init.call_count, 0)
+
+    def test_explicit_provider_precedes_model_prefix_without_subscription_auth(self):
+        variants = [
+            {'model': 'chatgpt/gpt-5', 'custom_llm_provider': 'openai'},
+            {'model': 'chatgpt/gpt-5', 'custom_llm_provider': 'os.environ/FIXTURE_PROVIDER'},
+            {'model': 'os.environ/FIXTURE_MODEL', 'custom_llm_provider': 'openai'},
+        ]
+        with patch.dict(os.environ, {'FIXTURE_MODEL': 'chatgpt/gpt-5', 'FIXTURE_PROVIDER': 'openai'}):
+            for params in variants:
+                # Direct add/upsert require resolved provider strings upstream;
+                # initial/config loading resolves env references before those calls.
+                entries = ('constructor', 'set_model_list')
+                if not params['custom_llm_provider'].startswith('os.environ/'):
+                    entries += ('add_deployment', 'upsert_deployment')
+                for entry in entries:
+                    with self.subTest(params=params, entry=entry):
+                        model = self.model(99, 'openai')
+                        model['litellm_params'].update(params)
+                        saved = copy.deepcopy(model)
+                        if entry == 'constructor':
+                            router = Router(model_list=[model])
+                        else:
+                            router = Router(model_list=[])
+                            if entry == 'set_model_list':
+                                router.set_model_list([model])
+                            else:
+                                getattr(router, entry)(Deployment(**model))
+                        self.assertEqual([m['model_name'] for m in router.model_list], ['public-99'])
+                        self.assertEqual(model, saved)
+        self.auth_init.assert_not_called()
+        self.login.assert_not_called()
 
     def test_explicit_provider_and_environment_model(self):
         variants = [

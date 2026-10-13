@@ -38,12 +38,13 @@ without the plugin's import hook, a retained subscription model can enter device
 before HTTP startup. This is verified upstream behavior, not an upstream disable feature.
 
 HA init now writes `/run/woow/chatgpt-subscription` atomically, root-owned mode 0644
-under the existing root-owned 0711 tmpfs directory. Only `enabled\n` permits ChatGPT
+under the existing root-owned 0711 tmpfs directory. Only the exact bytes `enabled\n` (LF, not CRLF) permit ChatGPT
 deployments. Disabled, missing, unreadable or invalid policy excludes them from the
 in-memory Router before provider construction. The pinned HA build patch covers
 `set_model_list`, `add_deployment`, and `upsert_deployment` (initial DB loading,
-periodic DB updates and direct additions). Provider identity uses the underlying
-`model` prefix or explicit `custom_llm_provider`, including environment references;
+periodic DB updates and direct additions). Provider identity gives a resolved, nonempty explicit `custom_llm_provider` precedence
+over the underlying `model` prefix; only absent/empty explicit providers use that
+prefix. Both fields support environment references without calling the authenticating resolver;
 a public display name alone is not a provider identity.
 
 There is no SQL mutation, model deletion, credential deletion, token refresh or
