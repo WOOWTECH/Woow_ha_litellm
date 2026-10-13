@@ -30,6 +30,27 @@ PATCHES = {
     ),
 }
 
+# Reuse the streaming path's error classification for buffered SSE too. Without
+# this, the upstream buffered parser raises an error carrying HTTP 200, discards
+# incomplete responses, and can expose the entire SSE body on truncation.
+RESPONSE_EDITS = (
+    ('self._extract_completed_response_from_sse(body_text=body_text)',
+     'self._extract_completed_response_from_sse(body_text=body_text, model=model)', 1),
+    ('message=error_message or raw_response.text,\n                status_code=raw_response.status_code,',
+     'message="ChatGPT response stream ended without a terminal response",\n'
+     '                status_code=502,', 1),
+    ('def _extract_completed_response_from_sse(self, body_text: str)',
+     'def _extract_completed_response_from_sse(self, body_text: str, model: str = "")', 1),
+    ('if event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED:',
+     'if event_type in (ResponsesAPIStreamEvents.RESPONSE_COMPLETED, ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE):', 1),
+    ('                extracted_error = self._extract_error_message(parsed_chunk)\n'
+     '                if extracted_error is not None:\n'
+     '                    error_message = extracted_error',
+     '                from litellm.responses.streaming_iterator import _map_stream_error_to_exception\n'
+     '                error_obj = parsed_chunk.get("error") or (parsed_chunk.get("response") or {}).get("error")\n'
+     '                raise _map_stream_error_to_exception(error_obj, model, "chatgpt")', 1),
+)
+
 def apply(root):
     pending=[]
     for name,(expected,old,new,count) in PATCHES.items():
@@ -41,6 +62,11 @@ def apply(root):
         if source.count(old)!=count:
             raise SystemExit('Refusing changed patch context: '+name)
         result=source.replace(old,new)
+        if name == 'llms/chatgpt/responses/transformation.py':
+            for original,replacement,expected_count in RESPONSE_EDITS:
+                if result.count(original) != expected_count:
+                    raise SystemExit('Refusing changed error-handling context: '+name)
+                result=result.replace(original,replacement)
         compile(result,str(path),'exec')
         pending.append((path,result))
     for path,result in pending:

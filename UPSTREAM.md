@@ -8,7 +8,7 @@ HA acceptance on 2026-10-13 reproduced three failures with connected subscriptio
 
 `ChatGPTResponsesAPIConfig` requires `stream: true` on the upstream wire. Both HTTP handler paths promote that provider flag to the client stream flag. The bridge then drains the streaming iterator, whose terminal response may omit output items. The buffered ChatGPT SSE parser already recovers items from earlier events.
 
-The bounded patch converts string input to one user message and preserves the requested client stream flag for ChatGPT only. Upstream SSE remains enabled; nonstream clients use the existing buffered parser. Other providers retain their existing behavior. The two upstream file hashes must match before either file is modified. A later upstream version must be reviewed again.
+The bounded patch converts string input to one user message and preserves the requested client stream flag for ChatGPT only. Upstream SSE remains enabled; nonstream clients use the existing buffered parser. The buffered path also retains incomplete terminal responses and reuses the streaming path's 429/400/500 error mapping. A missing terminal event raises a sanitized 502 rather than an error with HTTP 200 and raw SSE content. Other providers retain their existing behavior. The two upstream file hashes must match before either file is modified. A later upstream version must be reviewed again.
 
 `tests/protocol/check_responses.py` exercises the actual sync and async HTTP handlers, ChatGPT provider and Responses-to-Chat transformation over a mock HTTP transport. It covers string/array input, streaming, missing terminal output recovery, provider errors and the OpenAI nonstream path. Both CI and publication run it inside the built image with networking disabled.
 

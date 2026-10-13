@@ -5,6 +5,7 @@
 - ChatGPT Responses 接受字串與訊息陣列輸入。
 - `stream: false` 回傳 JSON；保留 ChatGPT 上游必要的 SSE 傳輸。
 - 非串流 Chat Completions 復用上游事件輸出回復，避免完成事件省略 output 時遺失答案。
+- 保留限流、provider 錯誤及不完整回應的狀態；截斷串流回安全的 502。
 - 建置時檢查兩個上游來源檔雜湊；新增不連外的同步、非同步、串流及錯誤回歸驗證。
 
 ## 0.1.0
