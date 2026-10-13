@@ -103,6 +103,8 @@ COPY rootfs/ /
 COPY patches/ /usr/share/woow-litellm/patches/
 RUN python -I /usr/share/woow-litellm/patches/apply_responses_fix.py \
  && python -I /usr/share/woow-litellm/patches/apply_subscription_policy.py
+# API01/API07/API23: source-hash-guarded, independent of provider and plugin patches.
+RUN python -I /usr/share/woow-litellm/patches/apply_api_compat.py
 
 ARG BUILD_VERSION=0.1.2
 ARG BUILD_REF=unknown
