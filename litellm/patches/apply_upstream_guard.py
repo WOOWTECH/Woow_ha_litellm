@@ -2,18 +2,21 @@
 
 P0  Provider errors reach clients, streaming error frames and spend logs without the gateway's
     OpenRouter account (user_id), error.metadata (raw upstream text, provider_name, is_byok,
-    flagged input, headers) or request/generation ids; only rate-limit and retry-after provider
-    headers are forwarded as llm_provider-*. The original text stays in the server log.
+    flagged input, headers) or request/generation ids, on openrouter/ and on openai/ routes
+    pointed at OpenRouter; only rate-limit and retry-after provider headers are forwarded as
+    llm_provider-*; /health shows non-admin keys no raw request or stack trace. The original
+    text stays in the server log.
 P1  max_tokens / max_completion_tokens / max_output_tokens must be null or an integer 1..2**31-1
     (OpenAI 400 envelope with param, before any provider call or spend log).
-P1  Budget admission is strict (an estimate above the remaining budget is refused, not shrunk),
-    reasoning models reserve at least R output tokens and a minimum input size, a negative or
+P1  Budget admission is strict (a request whose input plus reasoning reserve does not fit the
+    remaining budget is refused, not shrunk), reasoning models reserve at least R output tokens
+    and a minimum input size, a negative or
     boolean max_tokens no longer shrinks the reservation, the refusal carries
     x-should-retry: false and no longer echoes the key hash, and an unpriced model used by a
     budget-limited key is logged (or refused).
 P2  reasoning_effort is forwarded to OpenRouter for every model, not only models in the cost map.
 
-Runs last, after apply_api_errors.py, on both the HA and the PaaS chains. Seven inputs are pristine
+Runs last, after apply_api_errors.py, on both the HA and the PaaS chains. Eight inputs are pristine
 LiteLLM 1.104.0 files; proxy/common_request_processing.py is the reviewed apply_api_errors.py
 output. Validate every input, replacement count, output hash, both helpers and Python syntax
 before writing anything. One-shot: a second application intentionally fails closed.
@@ -27,11 +30,11 @@ import sys
 HELPERS = {
     'litellm_core_utils/woow_provider_errors.py': (
         'woow_provider_errors.py',
-        '1f623a58424faf8ac77afa82ba54f38d86e6f019381a4ef5d8a46a742bdee888',
+        '5c5f0bddacabc43cf9fa8c4edd6698c5284c2e26382a30441da898af6efe5232',
     ),
     'proxy/woow_request_guard.py': (
         'woow_request_guard.py',
-        'a62ea1fe54d8739a4b039c2e43c8258419beab52dbce9cce0ce74abb4d7acf92',
+        'b24669ba4757786988f482ccf788ba02258c37daea04a36e18256f812f775980',
     ),
 }
 
@@ -39,7 +42,7 @@ HELPERS = {
 PATCHES = {
     'litellm_core_utils/exception_mapping_utils.py': (
         '7896a70c295d5730a975fc7edee30d91821bd9d6e09830bafd280f5a1c2da771',
-        'ae43e9c4ad321c592ab96ca85540e3ec484be64dab64d790865d976ec9aca090',
+        '8aac54ecede7cf11e3c0d934802eadb215cd51c4835df7f42d1e6c85311e57b6',
         (
             (
                 '            message = str(original_exception)\n'
@@ -48,12 +51,11 @@ PATCHES = {
                 '        message, str\n'
                 '    ):  # done to prevent user-confusion. Relevant issue - https://github.com/BerriAI/litellm/issues/1414\n',
                 '            message = str(original_exception)\n'
-                '    # Woow P0: OpenAI-compatible routes (openai/, text completion) pointed at OpenRouter.\n'
-                '    from litellm.litellm_core_utils.woow_provider_errors import scrub_provider_error\n'
+                '    # Woow P0: OpenAI-compatible routes (openai/, text completion, embeddings) pointed at\n'
+                '    # OpenRouter: the full SDK text decides, the inner message alone has no user_id.\n'
+                '    from litellm.litellm_core_utils.woow_provider_errors import scrub_compatible_message\n'
                 '\n'
-                '    message = scrub_provider_error(\n'
-                '        custom_llm_provider, message, getattr(original_exception, "status_code", None)\n'
-                '    )\n'
+                '    message = scrub_compatible_message(custom_llm_provider, message, original_exception)\n'
                 '\n'
                 '    if message is not None and isinstance(\n'
                 '        message, str\n'
@@ -189,7 +191,7 @@ PATCHES = {
     ),
     'proxy/spend_tracking/budget_reservation.py': (
         '433bf0a8f2e4ed5d7301c49c4f7d7151da65ed509157429b85bb32f53869cca5',
-        'b88a0cd59236fc94c3ce5a389b387fbdbb0f302153378ee132b9a70a5e58a31f',
+        'e6e75364b9a31a1f3608c3383e53ed31dcef36b3db844aef7a811950c8e18c53',
         (
             (
                 'from litellm.proxy.utils import PrismaClient, ProxyLogging\n',
@@ -198,11 +200,40 @@ PATCHES = {
                 1,
             ),
             (
-                '    if fail_closed_budget_enforcement and current_spend - counter.max_budget > 1e-12:\n',
-                '    # Woow P1: strict admission (default) refuses an estimate that does not fit the remaining\n'
-                '    # budget instead of shrinking the reservation; WOOW_BUDGET_ADMISSION=resize restores upstream.\n'
-                '    strict: Final = fail_closed_budget_enforcement or _woow_guard.budget_admission_mode() == "strict"\n'
-                '    if strict and current_spend - counter.max_budget > 1e-12:\n',
+                '    current_spend: float,\n'
+                '    fail_closed_budget_enforcement: bool = False,\n'
+                ') -> float:\n',
+                '    current_spend: float,\n'
+                '    fail_closed_budget_enforcement: bool = False,\n'
+                '    admission_floor_cost: float | None = None,  # Woow P1\n'
+                ') -> float:\n',
+                1,
+            ),
+            (
+                '    if fail_closed_budget_enforcement and current_spend - counter.max_budget > 1e-12:\n'
+                '        _raise_counter_budget_exceeded(\n'
+                '            counter=counter,\n'
+                '            current_cost=current_spend - reservation_cost,\n'
+                '            estimated_cost=reservation_cost,\n'
+                '        )\n',
+                '    # Woow P1: strict admission (default) refuses a request whose unbounded part (input plus the\n'
+                '    # reasoning reserve) does not fit the remaining budget and resizes the rest as upstream does;\n'
+                '    # WOOW_BUDGET_ADMISSION=full refuses any estimate above it, resize restores upstream.\n'
+                '    required: Final = _woow_guard.admission_required_cost(\n'
+                '        reservation_cost, admission_floor_cost, fail_closed_budget_enforcement\n'
+                '    )\n'
+                '    if required is not None and required - remaining_before_reservation > 1e-12:\n'
+                '        _raise_counter_budget_exceeded(\n'
+                '            counter=counter,\n'
+                '            current_cost=current_spend - reservation_cost,\n'
+                '            estimated_cost=required,\n'
+                '        )\n',
+                1,
+            ),
+            (
+                '    estimate_detail: Final = "" if estimated_cost is None else f"Estimated request cost: {estimated_cost}, "\n',
+                '    # Woow P1: say that the estimate, not spend so far, did not fit what is left.\n'
+                '    estimate_detail: Final = _woow_guard.budget_estimate_detail(estimated_cost, counter.max_budget - current_cost)\n',
                 1,
             ),
             (
@@ -217,7 +248,28 @@ PATCHES = {
                 '        # Woow P1: a budget-limited key on a model without a price is logged (or refused).\n'
                 '        _woow_guard.check_unpriced_budgeted_request(get_model_from_request(request_body, route, llm_router=llm_router))\n'
                 '    if reservation_cost is None or reservation_cost <= 0:\n'
-                '        return None\n',
+                '        return None\n'
+                '    # Woow P1: what strict admission must fit: the estimate with every output limit taken as 1.\n'
+                '    admission_floor_cost: Final = (\n'
+                '        estimate_request_max_cost(\n'
+                '            request_body=_woow_guard.admission_floor_body(request_body),\n'
+                '            route=route,\n'
+                '            llm_router=llm_router,\n'
+                '            input_token_counts=input_token_counts,\n'
+                '        )\n'
+                '        if _woow_guard.admission_floor_needed()\n'
+                '        else None\n'
+                '    )\n',
+                1,
+            ),
+            (
+                '                        fail_closed_budget_enforcement=fail_closed_budget_enforcement,\n'
+                '                    )\n'
+                '                    continue\n',
+                '                        fail_closed_budget_enforcement=fail_closed_budget_enforcement,\n'
+                '                        admission_floor_cost=admission_floor_cost,  # Woow P1\n'
+                '                    )\n'
+                '                    continue\n',
                 1,
             ),
             (
@@ -256,6 +308,18 @@ PATCHES = {
                 1,
             ),
         ),
+    ),
+    'proxy/health_endpoints/_health_endpoints.py': (
+        '8ea1e58c7ee57f77e21e7dd4e711f18ef135a485e38564cf0958ff36c0e92a03',
+        '5ff405b436493823c8ca6276f58a52405f151e658da3b75472f86cb4f4a01432',
+        ((
+            '            out[key] = [({k: v for k, v in ep.items() if k not in drop} if isinstance(ep, dict) else ep) for ep in eps]\n',
+            '            # Woow P0: non-admin callers also lose the raw request (api_base) and the stack trace.\n'
+            '            from litellm.litellm_core_utils.woow_provider_errors import health_endpoint_for_non_admin\n'
+            '\n'
+            '            out[key] = [(health_endpoint_for_non_admin(ep, drop) if isinstance(ep, dict) else ep) for ep in eps]\n',
+            1,
+        ),),
     ),
     'proxy/auth/auth_exception_handler.py': (
         '9da190e8c1f5db0287f420c20e875069eae16b6af76b8188378600e7347998a2',

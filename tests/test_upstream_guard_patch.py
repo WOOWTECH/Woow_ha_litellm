@@ -18,6 +18,7 @@ PRISTINE = {
     'litellm_core_utils/llm_response_utils/get_headers.py': 'fb2922ad9bccad07db19070eb08ecbe8db4aa6203bb2b36b35e09d5b02e2ce78',
     'litellm_core_utils/core_helpers.py': '045e8d1e77e7e152da8eb21b0bb6e5dcc3e88a685b8b984357e69638dbf03d8a',
     'proxy/spend_tracking/budget_reservation.py': '433bf0a8f2e4ed5d7301c49c4f7d7151da65ed509157429b85bb32f53869cca5',
+    'proxy/health_endpoints/_health_endpoints.py': '8ea1e58c7ee57f77e21e7dd4e711f18ef135a485e38564cf0958ff36c0e92a03',
     'proxy/auth/auth_exception_handler.py': '9da190e8c1f5db0287f420c20e875069eae16b6af76b8188378600e7347998a2',
 }
 EARLIER = ('apply_responses_fix.py', 'apply_subscription_policy.py', 'apply_api_compat.py', 'apply_routes_auth.py',

@@ -11,12 +11,17 @@ only when a request is refused.
   ``WOOW_TOKEN_LIMIT_VALIDATION=enforce`` (default) | ``warn`` | ``off``.
 - Budget reservations of reasoning models reserve at least R output tokens (the client's
   max_tokens does not bound hidden reasoning on OpenRouter) and a minimum input size (hidden
-  provider prompt), unless the body explicitly disables reasoning. R comes from
-  ``model_info.woow_reasoning_output_reserve_tokens``, else ``WOOW_BUDGET_REASONING_RESERVE_TOKENS``,
-  else 2048; the input floor from ``model_info.woow_min_input_tokens``, else
-  ``WOOW_BUDGET_MIN_INPUT_TOKENS``, else 256.
-- ``WOOW_BUDGET_ADMISSION=strict`` (default) refuses a request whose estimate exceeds the
-  remaining budget instead of shrinking the reservation; ``resize`` restores upstream.
+  provider prompt), unless the body explicitly disables reasoning (``reasoning.enabled: false``,
+  ``reasoning.effort``/``reasoning_effort: none``, ``reasoning.max_tokens: 0`` or Anthropic's
+  ``thinking.type: disabled``). R comes from ``model_info.woow_reasoning_output_reserve_tokens``,
+  else ``WOOW_BUDGET_REASONING_RESERVE_TOKENS``, else 2048; the input floor from
+  ``model_info.woow_min_input_tokens``, else ``WOOW_BUDGET_MIN_INPUT_TOKENS``, else 256.
+- ``WOOW_BUDGET_ADMISSION=strict`` (default) refuses a request when the remaining budget cannot
+  cover the part of it the client's max_tokens does not bound: the input plus, for a reasoning
+  request, the reasoning reserve R (the estimate with max_tokens taken as 1). A request that
+  fits that floor but not its full estimate is admitted with the reservation shrunk to the
+  remaining budget, as upstream does. ``full`` refuses every estimate above the remaining
+  budget (no max_tokens counts as 16384 tokens); ``resize`` restores upstream.
 - ``WOOW_BUDGET_UNPRICED=allow`` (default) logs a budget-limited key using a model without a
   price; ``block_budgeted_keys`` refuses it with a 400.
 """
@@ -66,7 +71,7 @@ def token_limit_mode() -> str:
 
 
 def budget_admission_mode() -> str:
-    return _choice(ADMISSION_ENV, ("strict", "resize"))
+    return _choice(ADMISSION_ENV, ("strict", "full", "resize"))
 
 
 def unpriced_policy() -> str:
@@ -188,9 +193,16 @@ def is_reasoning_model(model_info: Mapping[str, object]) -> bool:
 
 
 def reasoning_disabled(request_body: Mapping[str, object]) -> bool:
-    """True when the body explicitly turns reasoning off (OpenRouter object or OpenAI effort)."""
+    """True when the body explicitly turns reasoning off (OpenRouter object, OpenAI effort, Anthropic thinking)."""
     reasoning = request_body.get("reasoning")
-    if isinstance(reasoning, Mapping) and (reasoning.get("enabled") is False or reasoning.get("effort") == "none"):
+    if isinstance(reasoning, Mapping):
+        budget = reasoning.get("max_tokens")
+        if reasoning.get("enabled") is False or reasoning.get("effort") == "none":
+            return True
+        if isinstance(budget, int) and not isinstance(budget, bool) and budget == 0:
+            return True
+    thinking = request_body.get("thinking")
+    if isinstance(thinking, Mapping) and thinking.get("type") == "disabled":
         return True
     return request_body.get("reasoning_effort") == "none"
 
@@ -203,6 +215,41 @@ def reserve_output_tokens(
         return value
     reserve = _setting(model_info, "woow_reasoning_output_reserve_tokens", RESERVE_ENV, DEFAULT_REASONING_RESERVE)
     return max(value, min(reserve, ceiling))
+
+
+_OUTPUT_LIMIT_FIELDS: Final = ("max_completion_tokens", "max_tokens", "max_output_tokens")
+
+
+def admission_floor_body(request_body: Mapping[str, object]) -> dict:
+    """The request with every output-token limit set to 1: its estimate is what strict admission must fit."""
+    floor = dict(request_body)
+    for field in _OUTPUT_LIMIT_FIELDS:
+        floor[field] = 1
+    config = floor.get("inferenceConfig")
+    if isinstance(config, Mapping):
+        floor["inferenceConfig"] = {**config, "maxTokens": 1}
+    return floor
+
+
+def admission_floor_needed() -> bool:
+    return budget_admission_mode() == "strict"
+
+
+def admission_required_cost(estimate: float, floor: float | None, fail_closed: bool) -> float | None:
+    """Cost the remaining budget must cover before admission; None admits by resizing (upstream)."""
+    mode = budget_admission_mode()
+    if fail_closed or mode == "full":
+        return estimate
+    if mode == "resize":
+        return None
+    return estimate if floor is None else min(floor, estimate)
+
+
+def budget_estimate_detail(estimated_cost: float | None, remaining: float) -> str:
+    """Refusal detail: the estimate that did not fit and what was left (never an entity id)."""
+    if estimated_cost is None:
+        return ""
+    return f"Estimated request cost: {estimated_cost:.6g} exceeds the remaining budget: {max(remaining, 0.0):.6g}, "
 
 
 def reserve_input_tokens(model_info: Mapping[str, object], counted: int) -> int:

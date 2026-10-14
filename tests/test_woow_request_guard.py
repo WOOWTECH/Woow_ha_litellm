@@ -77,12 +77,16 @@ def test_reserve_output_tokens():
 
 
 @pytest.mark.parametrize('body', [{'reasoning': {'enabled': False}}, {'reasoning': {'effort': 'none'}},
-                                  {'reasoning_effort': 'none'}])
+                                  {'reasoning_effort': 'none'}, {'reasoning': {'max_tokens': 0}},
+                                  {'thinking': {'type': 'disabled'}}])
 def test_reasoning_disabled_body_gets_no_reserve(body):
     assert guard.reserve_output_tokens(body, REASONING, 16, 100_000) == 16
 
 
-@pytest.mark.parametrize('body', [{'reasoning': {'enabled': True}}, {'reasoning_effort': 'low'}, {'reasoning': 'off'}])
+@pytest.mark.parametrize('body', [{'reasoning': {'enabled': True}}, {'reasoning_effort': 'low'}, {'reasoning': 'off'},
+                                  {'reasoning_effort': 'minimal'}, {'reasoning': {'max_tokens': False}},
+                                  {'reasoning': {'max_tokens': 64}}, {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+                                  {'thinking': 'disabled'}])
 def test_reasoning_not_disabled(body):
     assert guard.reserve_output_tokens(body, REASONING, 16, 100_000) == 2048
 
@@ -106,7 +110,7 @@ def test_reserve_input_tokens(monkeypatch):
 
 
 @pytest.mark.parametrize('env,read,values', [
-    ('WOOW_BUDGET_ADMISSION', 'budget_admission_mode', ('strict', 'resize')),
+    ('WOOW_BUDGET_ADMISSION', 'budget_admission_mode', ('strict', 'full', 'resize')),
     ('WOOW_BUDGET_UNPRICED', 'unpriced_policy', ('allow', 'block_budgeted_keys')),
     ('WOOW_TOKEN_LIMIT_VALIDATION', 'token_limit_mode', ('enforce', 'warn', 'off')),
 ])
@@ -135,3 +139,34 @@ def test_unpriced_allow_logs_only(caplog):
     caplog.set_level(logging.WARNING, logger='LiteLLM')
     guard.check_unpriced_budgeted_request('vendor/model')
     assert [r.getMessage() for r in caplog.records] == ['Woow event=unpriced_budgeted_request model=vendor/model']
+
+
+def test_admission_floor_body_sets_every_output_limit_to_one():
+    body = {'model': 'm', 'max_tokens': 32000, 'n': 2, 'inferenceConfig': {'maxTokens': 900, 'temperature': 0}}
+    floor = guard.admission_floor_body(body)
+    assert floor == {'model': 'm', 'max_tokens': 1, 'max_completion_tokens': 1, 'max_output_tokens': 1, 'n': 2,
+                     'inferenceConfig': {'maxTokens': 1, 'temperature': 0}}
+    assert body['max_tokens'] == 32000 and body['inferenceConfig']['maxTokens'] == 900  # the request is not changed
+
+
+@pytest.mark.parametrize('mode,fail_closed,required', [
+    (None, False, 0.005), ('strict', False, 0.005), ('full', False, 0.04), ('resize', False, None),
+    ('resize', True, 0.04), (None, True, 0.04),
+])
+def test_admission_required_cost(monkeypatch, mode, fail_closed, required):
+    if mode:
+        monkeypatch.setenv('WOOW_BUDGET_ADMISSION', mode)
+    assert guard.admission_required_cost(0.04, 0.005, fail_closed) == required
+    assert guard.admission_floor_needed() is (mode in (None, 'strict'))
+
+
+def test_admission_required_cost_without_a_floor_is_the_estimate():
+    assert guard.admission_required_cost(0.04, None, False) == 0.04
+    assert guard.admission_required_cost(0.004, 0.005, False) == 0.004  # never more than the estimate
+
+
+def test_budget_estimate_detail():
+    assert guard.budget_estimate_detail(None, 0.1) == ''
+    assert guard.budget_estimate_detail(0.0054400000000001, 0.0011200000000000003) == (
+        'Estimated request cost: 0.00544 exceeds the remaining budget: 0.00112, ')
+    assert guard.budget_estimate_detail(0.01, -0.5).endswith('remaining budget: 0, ')

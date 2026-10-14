@@ -9,17 +9,24 @@ upstream provider's raw answer (``error.metadata.raw``), BYOK flags, flagged inp
 provider headers. LiteLLM copies that text into the client error, the streaming error frame
 and the spend log, which internal users can read. Everything here rebuilds such a body as
 ``{"error":{"message":M,"code":C}}`` with a status-dependent ``M`` and replaces account,
-organisation, request, generation and key identifiers. The original text only goes to the
-server log (WARNING, already secret-redacted by LiteLLM).
+organisation, project, request, generation and key identifiers. The original text only goes
+to the server log (WARNING, already secret-redacted by LiteLLM).
+
+An error is treated as OpenRouter's when the provider is ``openrouter`` or when its body has
+OpenRouter's shape: a top-level ``user_id`` next to an ``error`` object (``openai/`` routes
+pointed at OpenRouter). The body may be JSON or the Python ``repr`` the OpenAI SDK puts in
+``Error code: 403 - {...}``. Any other provider's text is returned unchanged.
 
 Every function is idempotent: a router or text-completion wrapper may scrub the same text
 again without changing it.
 """
+import ast
 import json
 import logging
 import os
 import re
 from typing import Final
+from urllib.parse import urlsplit
 
 _LOG: Final = logging.getLogger("LiteLLM")
 
@@ -41,13 +48,18 @@ _REASONS_LIMIT: Final = 5
 _REASON_LIMIT: Final = 64
 _LOG_LIMIT: Final = 2000
 _PROVIDER_ERROR_MARK: Final = "Provider returned error"
+_BODY_LIMIT: Final = 100_000  # longest body parsed as a Python literal (OpenAI SDK repr)
+_HEALTH_ERROR_LIMIT: Final = 500
+_HEALTH_HIDDEN_FIELDS: Final = frozenset({"raw_request_typed_dict"})
 
 REDACTED: Final = "[redacted]"
 REDACTED_URL: Final = "[redacted-url]"
 _ID_RULES: Final = (
     (re.compile(r"https?://[^\s\"'<>]*openrouter\.ai[^\s\"'<>]*", re.I), REDACTED_URL),
     (re.compile(r"\buser_[A-Za-z0-9]{6,}"), REDACTED),
-    (re.compile(r"\borg-[A-Za-z0-9]{6,}"), REDACTED),
+    (re.compile(r"\borg[-_][A-Za-z0-9]{6,}"), REDACTED),
+    (re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I), REDACTED),
+    (re.compile(r"\bprojects/[0-9]{4,}"), "projects/" + REDACTED),
     (re.compile(r"\b(?:req|gen|msg|chatcmpl)[_-][A-Za-z0-9-]{6,}"), REDACTED),
     (re.compile(r"\bsk-[A-Za-z0-9-]{8,}"), REDACTED),
     (re.compile(r"\b[0-9a-f]{32,}\b"), REDACTED),
@@ -133,42 +145,110 @@ def _body_parts(body: dict) -> tuple[str, object, dict]:
     return message, code, metadata if isinstance(metadata, dict) else {}
 
 
-def _rebuild(text: str, status: object) -> str:
+def _object_end(text: str, start: int) -> int | None:
+    """Index after the ``{...}`` opened at ``start`` (JSON or Python repr quoting), else None."""
+    depth, quote, escaped = 0, "", False
+    for index in range(start, len(text)):
+        char = text[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char in "{[":
+            depth += 1
+        elif char in "}]":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
+
+
+def _find_body(text: str) -> tuple[int, int, dict] | None:
+    """The first ``{...}`` in ``text`` as (start, end, dict): JSON, else a Python literal."""
     start = text.find("{")
     if start < 0:
-        return redact_ids(text)
+        return None
     try:
         body, end = json.JSONDecoder().raw_decode(text, start)
     except ValueError:
+        end = _object_end(text, start)
+        if end is None or end - start > _BODY_LIMIT:
+            return None
+        try:
+            body = ast.literal_eval(text[start:end])
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            return None
+    return (start, end, body) if isinstance(body, dict) else None
+
+
+def _openrouter_shaped(body: dict) -> bool:
+    """OpenRouter's error body: ``{"error": {...}, "user_id": ...}`` (never Anthropic's ``{"type": "error"}``)."""
+    return "user_id" in body and isinstance(body.get("error"), dict) and body.get("type") != "error"
+
+
+def _rebuild(text: str, status: object, found: tuple[int, int, dict] | None) -> str:
+    if found is None:
         return redact_ids(text)
-    if not isinstance(body, dict):
-        return redact_ids(text)
+    start, end, body = found
     message, code, metadata = _body_parts(body)
     client = _client_message(_status(status, code), message, metadata)
     rebuilt = json.dumps({"error": {"message": redact_ids(client), "code": code}}, separators=(",", ":"), ensure_ascii=False)
     return redact_ids(text[:start]) + rebuilt + redact_ids(text[end:])
 
 
-def _is_openrouter_error(provider: object, text: str) -> bool:
-    return provider == "openrouter" or ("error" in text and "user_id" in text)
+def _log_scrubbed(provider: object, status: object, raw: str) -> None:
+    _LOG.warning("Woow upstream error scrubbed (provider=%s status=%s) raw=%s", provider, status, raw[:_LOG_LIMIT])
 
 
 def scrub_provider_error(provider: object, error_str: str, status: object = None) -> str:
     """Client-safe text of a provider error; other providers' text is returned unchanged.
 
     ``error_str`` is LiteLLM's (already secret-redacted) provider error text. OpenRouter
-    errors, and any error text that carries a ``user_id`` (``openai/`` routes pointed at
-    OpenRouter), are rebuilt; the original goes to the server log only.
+    errors, and OpenRouter-shaped bodies on other providers (``openai/`` routes pointed at
+    OpenRouter, JSON or the OpenAI SDK's Python repr), are rebuilt; the original goes to the
+    server log only.
     """
-    if not isinstance(error_str, str) or not _is_openrouter_error(provider, error_str):
+    if not isinstance(error_str, str):
         return error_str
-    scrubbed = _rebuild(error_str, status)
+    found = _find_body(error_str)
+    if provider != "openrouter" and (found is None or not _openrouter_shaped(found[2])):
+        return error_str
+    scrubbed = _rebuild(error_str, status, found)
     if scrubbed != error_str:
-        _LOG.warning(
-            "Woow upstream error scrubbed (provider=%s status=%s) raw=%s",
-            provider, status, error_str[:_LOG_LIMIT],
-        )
+        _log_scrubbed(provider, status, error_str)
     return scrubbed
+
+
+def scrub_compatible_message(provider: object, message: object, exception: object) -> object:
+    """Client message for LiteLLM's OpenAI-compatible mapping (``openai/``, text completion, embeddings).
+
+    That mapping shows either the SDK's whole ``Error code: N - {...}`` text or only the inner
+    ``error.message``; ``user_id`` and ``metadata`` only appear in the exception's full text.
+    When that full text is OpenRouter's, the status policy applies here too.
+    """
+    if not isinstance(message, str):
+        return message
+    status = getattr(exception, "status_code", None)
+    inline = _find_body(message)
+    if inline is not None and (provider == "openrouter" or _openrouter_shaped(inline[2])):
+        return scrub_provider_error(provider, message, status)
+    if provider == "openrouter":
+        return scrub_provider_error(provider, message, status)
+    for full in (getattr(exception, "message", None), str(exception)):
+        found = _find_body(full) if isinstance(full, str) else None
+        if found is None or not _openrouter_shaped(found[2]):
+            continue
+        body_message, code, metadata = _body_parts(found[2])
+        client = redact_ids(_client_message(_status(status, code), body_message, metadata))
+        if client != message:
+            _log_scrubbed(provider, status, full)
+        return client
+    return message
 
 
 def stream_error_parts(error_chunk: object) -> tuple[str, int]:
@@ -192,10 +272,39 @@ def stream_error_parts(error_chunk: object) -> tuple[str, int]:
 
 
 def client_safe_stream_message(message: object) -> str:
-    """Second line of defence for SSE error events (Anthropic ``/v1/messages`` adapter)."""
+    """Second line of defence for SSE error events (Anthropic ``/v1/messages`` adapter).
+
+    An OpenRouter-shaped body is rebuilt; any other provider's text keeps its own fields and
+    only loses identifiers (``user_``/``org-`` ids, request ids, keys, OpenRouter URLs).
+    """
     if not isinstance(message, str):
         message = "" if message is None else str(message)
-    return _rebuild(message, None)
+    found = _find_body(message)
+    if found is not None and _openrouter_shaped(found[2]):
+        return _rebuild(message, None, found)
+    return redact_ids(message)
+
+
+def _health_error(error: str, hidden: list[str]) -> str:
+    """First line of a health-check error, without the deployment's api_base, host or identifiers."""
+    lines = error.strip().splitlines()
+    line = lines[0] if lines else ""
+    for value in hidden:
+        host = urlsplit(value).hostname if "://" in value else None
+        for secret in (value, value.rstrip("/"), host):
+            if secret:
+                line = line.replace(secret, REDACTED_URL)
+    return redact_ids(line)[:_HEALTH_ERROR_LIMIT]
+
+
+def health_endpoint_for_non_admin(endpoint: dict, admin_only: object) -> dict:
+    """/health endpoint entry for a non-admin caller: no routing fields, raw request or stack trace."""
+    drop = set(admin_only) | _HEALTH_HIDDEN_FIELDS
+    hidden = [str(endpoint[key]) for key in sorted(set(admin_only)) if isinstance(endpoint.get(key), str) and endpoint[key]]
+    out = {key: value for key, value in endpoint.items() if key not in drop}
+    if isinstance(out.get("error"), str):
+        out["error"] = _health_error(out["error"], hidden)
+    return out
 
 
 def provider_header_allowed(name: str) -> bool:

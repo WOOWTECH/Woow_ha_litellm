@@ -84,6 +84,11 @@ ERRORS = {
     'or504': _error(504, 'Gateway timeout', {'provider_name': 'WoowFakeProvider'}),
 }
 MIDSTREAM = {'midstream': 502, 'midstream-strcode': 'server_error'}
+# Other providers' own error bodies: never rewritten (Claude Code always sends metadata.user_id).
+FOREIGN_ERRORS = {
+    'anth400': (400, {'type': 'error', 'error': {
+        'type': 'invalid_request_error', 'message': 'metadata.user_id: String should have at most 256 characters'}}),
+}
 
 
 def _error_headers(status):
@@ -120,8 +125,8 @@ class OpenRouter:
         self.calls.append({'scenario': scenario, 'path': request.url.path, 'body': body})
         if self.delay:
             await asyncio.sleep(self.delay)
-        if scenario in ERRORS:
-            status, payload = ERRORS[scenario]
+        if scenario in ERRORS or scenario in FOREIGN_ERRORS:
+            status, payload = ERRORS.get(scenario) or FOREIGN_ERRORS[scenario]
             return httpx.Response(status, json=payload, headers=_error_headers(status), request=request)
         headers = {'x-request-id': X_REQUEST_ID, 'cf-ray': CF_RAY, PROBE_HEADER: PROBE_VALUE,
                    'x-ratelimit-remaining-requests': '7', 'retry-after': '1'}
@@ -182,7 +187,12 @@ MODEL_LIST = [_deployment(s, s) for s in (*ERRORS, *MIDSTREAM)] + [
     _deployment('compat400', 'or400', model='openai/woowfake/model'),
     _deployment('compatctx', 'or400ctx', model='openai/woowfake/model'),
     _deployment('compat503', 'or503', model='openai/woowfake/model'),
+    _deployment('anthropic400', 'anth400', model='anthropic/woowfake-model'),
 ]
+# openai/ deployments pointed at OpenRouter: the OpenAI SDK reports these as a Python repr
+# ("Error code: 403 - {'error': {...}, 'user_id': ...}") or only the inner error.message.
+COMPAT = ('or400nested', 'or401', 'or402', 'or403key', 'or403mod', 'or404', 'or429byok', 'or500', 'or502')
+MODEL_LIST += [_deployment('compat-' + s, s, model='openai/woowfake/model') for s in COMPAT]
 
 
 class Gateway:
@@ -476,6 +486,74 @@ def test_openai_compatible_route_to_openrouter_is_scrubbed(gateway):
     assert 'temperature: Invalid input' in message_of(result)
 
 
+COMPAT_ROUTES = ('chat', 'chat-stream', 'completions', 'completions-stream', 'embeddings')
+# Same recording as BASELINE_018, for the openai/ deployments pointed at OpenRouter.
+BASELINE_018_COMPAT = {
+    'chat': {'or400nested': (400, 'invalid_request_error', '400', None), 'or401': (401, 'authentication_error', '401', None), 'or402': (402, 'invalid_request_error', '402', None), 'or403key': (403, 'permission_error', '403', None), 'or403mod': (403, 'permission_error', '403', None), 'or404': (404, 'invalid_request_error', '404', None), 'or429byok': (429, 'throttling_error', '429', None), 'or500': (500, 'internal_server_error', '500', None), 'or502': (502, 'internal_server_error', '502', None)},
+    'chat-stream': {'or400nested': (400, 'invalid_request_error', '400', None), 'or401': (401, 'authentication_error', '401', None), 'or402': (402, 'invalid_request_error', '402', None), 'or403key': (403, 'permission_error', '403', None), 'or403mod': (403, 'permission_error', '403', None), 'or404': (404, 'invalid_request_error', '404', None), 'or429byok': (429, 'throttling_error', '429', None), 'or500': (500, 'internal_server_error', '500', None), 'or502': (502, 'internal_server_error', '502', None)},
+    'completions': {'or400nested': (400, None, '400', None), 'or401': (401, None, '401', None), 'or402': (402, None, '402', None), 'or403key': (403, None, '403', None), 'or403mod': (403, None, '403', None), 'or404': (404, None, '404', None), 'or429byok': (429, 'throttling_error', '429', None), 'or500': (500, 'internal_server_error', '500', None), 'or502': (502, None, '502', None)},
+    'completions-stream': {'or400nested': (400, None, '400', None), 'or401': (401, None, '401', None), 'or402': (402, None, '402', None), 'or403key': (403, None, '403', None), 'or403mod': (403, None, '403', None), 'or404': (404, None, '404', None), 'or429byok': (429, 'throttling_error', '429', None), 'or500': (500, 'internal_server_error', '500', None), 'or502': (502, None, '502', None)},
+    'embeddings': {'or400nested': (400, 'invalid_request_error', '400', None), 'or401': (401, 'authentication_error', '401', None), 'or402': (402, 'invalid_request_error', '402', None), 'or403key': (403, 'permission_error', '403', None), 'or403mod': (403, 'permission_error', '403', None), 'or404': (404, 'invalid_request_error', '404', None), 'or429byok': (429, 'throttling_error', '429', None), 'or500': (500, 'internal_server_error', '500', None), 'or502': (502, 'internal_server_error', '502', None)},
+}
+
+
+@pytest.mark.parametrize('route,scenario', [(r, s) for r in COMPAT_ROUTES for s in COMPAT])
+def test_openai_compatible_route_never_leaks(gateway, route, scenario):
+    path, body = ROUTES[route]
+    result = gateway.request('POST', path, body('compat-' + scenario))
+    assert gateway.upstream.calls, 'the provider must have been called'
+    assert leaks(result) == [], result.text[:900]
+    assert error_of(result) == BASELINE_018_COMPAT[route][scenario]
+
+
+@pytest.mark.parametrize('route', COMPAT_ROUTES)
+@pytest.mark.parametrize('scenario,expected', [
+    ('or401', "The proxy's upstream credentials were rejected. Your API key is valid; contact the proxy administrator."),
+    ('or402', 'The upstream provider declined the request for a billing reason. Contact the proxy administrator.'),
+    ('or403key', 'The upstream provider refused the request. Contact the proxy administrator.'),
+    ('or403mod', 'The input was flagged by upstream moderation (violence).'),
+    ('or429byok', 'The upstream provider is rate limiting this model. Retry later.'),
+])
+def test_openai_compatible_route_gets_status_policy(gateway, route, scenario, expected):
+    path, body = ROUTES[route]
+    assert expected in message_of(gateway.request('POST', path, body('compat-' + scenario)))
+
+
+@pytest.mark.parametrize('route', ['chat', 'completions'])
+def test_openai_compatible_spend_log_scrubbed(gateway, route):
+    from litellm.proxy.spend_tracking.spend_tracking_utils import get_logging_payload
+    path, body = ROUTES[route]
+    gateway.request('POST', path, body('compat-or403mod'))
+    rows = [json.dumps(get_logging_payload(kwargs=r['kwargs'], response_obj=r['completion_response'],
+                                           start_time=r['start_time'], end_time=r['end_time'], llm_router=None),
+                       default=str) for r in gateway.spend]
+    assert rows and not [s for s in ('WoowFakeProvider', FLAGGED, USER_ID, 'flagged_input') for row in rows if s in row]
+
+
+def test_other_provider_error_mentioning_user_id_is_untouched(gateway, monkeypatch, litellm_log):
+    """An Anthropic 400 about metadata.user_id is not OpenRouter's body: byte-identical, no Woow log line."""
+    from litellm.litellm_core_utils import woow_provider_errors
+    guarded = gateway.request('POST', '/v1/chat/completions', {'model': 'anthropic400', 'messages': M})
+    assert not litellm_log.messages('Woow upstream error scrubbed')
+    monkeypatch.setattr(woow_provider_errors, 'scrub_provider_error', lambda provider, text, status=None: text)
+    monkeypatch.setattr(woow_provider_errors, 'scrub_compatible_message', lambda provider, message, exc: message)
+    unguarded = gateway.request('POST', '/v1/chat/completions', {'model': 'anthropic400', 'messages': M})
+    assert guarded.status_code == unguarded.status_code == 400
+    assert message_of(guarded) == message_of(unguarded)
+    assert 'metadata.user_id: String should have at most 256 characters' in message_of(guarded)
+
+
+def test_health_hides_raw_request_and_stack_trace_from_non_admin(gateway):
+    result = gateway.request('GET', '/health?model=or403mod', token=VIRTUAL)
+    entries = result.json()['unhealthy_endpoints']
+    assert entries and all('raw_request_typed_dict' not in e and 'api_base' not in e for e in entries)
+    assert all(isinstance(e.get('error'), str) and e['error'] and '\n' not in e['error'] for e in entries)
+    assert HOST not in result.text and 'stack trace' not in result.text and 'Traceback' not in result.text
+    assert leaks(result) == [], result.text[:900]
+    admin = gateway.request('GET', '/health?model=or403mod', token=MASTER)
+    assert any('raw_request_typed_dict' in e or 'api_base' in e for e in admin.json()['unhealthy_endpoints'])
+
+
 def test_success_headers_allowlist(gateway, monkeypatch):
     result = gateway.request('POST', '/v1/chat/completions', {'model': 'free', 'messages': M})
     provider = {k.lower() for k in result.headers if k.lower().startswith('llm_provider-')}
@@ -617,6 +695,7 @@ def test_budget_message_has_no_entity_hash(gateway):
                                          token=TINY))
     assert message.startswith('Budget has been exceeded! Key budget. Current cost: ')
     assert 'Max budget: 0.0001' in message and hash_token(TINY) not in message and 'key=' not in message
+    assert 'Estimated request cost: 0.00544 exceeds the remaining budget: 0.0001, ' in message
 
 
 def test_concurrent_reasoning_spend_bounded(gateway):
@@ -644,6 +723,39 @@ def test_concurrent_reasoning_spend_bounded(gateway):
     assert len(small) == 2 and small_actual <= 0.012
 
 
+def _budget_key(budget):
+    key = f'sk-upstream-guard-budget-{budget}-fixture'
+    server.user_api_key_cache.set_cache(key=hash_token(key), model_type=UserAPIKeyAuth, value=UserAPIKeyAuth(
+        api_key=hash_token(key), token=hash_token(key), user_role=LitellmUserRoles.INTERNAL_USER, models=[],
+        user_id='offline-user', metadata={}, max_budget=budget, spend=0.0))
+    return key
+
+
+TAIL_REQUESTS = [
+    (CHAT, {'model': 'plain', 'messages': M}),  # no max_tokens: estimated at 16384 output tokens
+    ('/v1/messages', {'model': 'plain', 'messages': M, 'max_tokens': 32000}),  # Claude Code
+    (CHAT, {'model': 'reasoning', 'messages': M, 'max_tokens': 32000}),
+]
+
+
+@pytest.mark.parametrize('path,body', TAIL_REQUESTS)
+def test_strict_admits_the_tail_of_a_budget(gateway, path, body):
+    """The full estimate exceeds the 0.03 budget, but input plus the reasoning reserve fits: admitted, resized."""
+    assert estimate(body, path)[0] > 0.03
+    result = gateway.request('POST', path, body, token=_budget_key(0.03))
+    assert result.status_code == 200, result.text[:600]
+    assert len(gateway.upstream.calls) == 1
+
+
+@pytest.mark.parametrize('path,body', TAIL_REQUESTS)
+def test_full_admission_refuses_any_estimate_above_the_remaining_budget(gateway, monkeypatch, path, body):
+    monkeypatch.setenv('WOOW_BUDGET_ADMISSION', 'full')
+    result = gateway.request('POST', path, body, token=_budget_key(0.03))
+    assert result.status_code == 422 and gateway.upstream.calls == []
+    assert 'exceeds the remaining budget: 0.03, ' in message_of(result)
+    assert result.headers.get('x-should-retry') == 'false'
+
+
 def test_reasoning_reserve_applied(gateway):
     cost, counts = estimate({'model': 'reasoning', 'messages': M, 'max_tokens': 16})
     assert cost == pytest.approx(256 * PRICE['input_cost_per_token'] + 2048 * PRICE['output_cost_per_token'])
@@ -659,9 +771,11 @@ def test_reasoning_reserve_env_override(gateway, monkeypatch):
 
 
 @pytest.mark.parametrize('disable', [{'reasoning': {'enabled': False}}, {'reasoning': {'effort': 'none'}},
-                                     {'reasoning_effort': 'none'}])
-def test_reasoning_disabled_body_skips_reserve(gateway, disable):
-    cost, _ = estimate({'model': 'reasoning', 'messages': M, 'max_tokens': 16, **disable})
+                                     {'reasoning_effort': 'none'}, {'reasoning': {'max_tokens': 0}},
+                                     {'thinking': {'type': 'disabled'}}])
+@pytest.mark.parametrize('route', [CHAT, '/v1/messages'])
+def test_reasoning_disabled_body_skips_reserve(gateway, disable, route):
+    cost, _ = estimate({'model': 'reasoning', 'messages': M, 'max_tokens': 16, **disable}, route)
     assert cost == pytest.approx(256 * PRICE['input_cost_per_token'] + 16 * PRICE['output_cost_per_token'])
 
 
