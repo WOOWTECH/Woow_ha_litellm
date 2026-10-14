@@ -427,6 +427,18 @@ def test_midstream_int_code_keeps_status(gateway):
     assert errors and errors[-1].get('code') == '502' and leaks(result) == []
 
 
+def test_messages_adapter_second_line_of_defence():
+    """/v1/messages turns a mid-stream provider error into an SSE error event inside the SDK
+    adapter, before any proxy hook; raw provider text reaching it is still rebuilt there."""
+    from litellm.llms.anthropic.experimental_pass_through.adapters import streaming_iterator
+    from litellm.llms.base_llm.chat.transformation import BaseLLMException
+    status, raw = ERRORS['or429byok']
+    event = streaming_iterator._mid_stream_error_sse_event(BaseLLMException(status_code=status, message=json.dumps(raw)))
+    text = event.decode()
+    assert text.startswith('event: error\n') and 'rate limiting this model' in text
+    assert not [s for s in LEAK_SENTINELS if s in text] and ORG_ID not in text
+
+
 def test_spend_log_row_scrubbed_keeps_codes(gateway):
     result = gateway.request('POST', '/v1/chat/completions', {'model': 'or429byok', 'messages': M})
     assert result.status_code == 429
