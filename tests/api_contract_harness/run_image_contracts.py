@@ -35,7 +35,7 @@ def verify_patched_source(root, patches):
             raise RuntimeError('Built image API patch mismatch: ' + name)
 
 
-def final_api_patches(api_patch, routes_patch, errors_patch):
+def final_api_patches(api_patch, routes_patch, errors_patch, guard_patch):
     patches = dict(api_patch.PATCHES)
     before, after, edits = patches[routes_patch.TARGET]
     if after != routes_patch.EXPECTED:
@@ -47,6 +47,13 @@ def final_api_patches(api_patch, routes_patch, errors_patch):
             raise RuntimeError('API errors patch must follow the exact API patch output: ' + name)
         patches[name] = (patches[name][0] if name in patches else errors_before, errors_after, errors_edits)
     patches[errors_patch.HELPER] = (None, errors_patch.HELPER_SHA256, ())
+    # The upstream guard runs after it; a file it shares must start from the exact output above.
+    for name, (guard_before, guard_after, guard_edits) in guard_patch.PATCHES.items():
+        if name in patches and patches[name][1] != guard_before:
+            raise RuntimeError('Upstream guard patch must follow the exact API errors output: ' + name)
+        patches[name] = (patches[name][0] if name in patches else guard_before, guard_after, guard_edits)
+    for name, (_, helper_hash) in guard_patch.HELPERS.items():
+        patches[name] = (None, helper_hash, ())
     return patches
 
 
@@ -99,7 +106,10 @@ def main():
         errors_spec = importlib.util.spec_from_file_location('errors_patch', HERE / 'apply_api_errors.py')
         errors_patch = importlib.util.module_from_spec(errors_spec)
         errors_spec.loader.exec_module(errors_patch)
-        final_patches = final_api_patches(patch, routes_patch, errors_patch)
+        guard_spec = importlib.util.spec_from_file_location('guard_patch', HERE / 'apply_upstream_guard.py')
+        guard_patch = importlib.util.module_from_spec(guard_spec)
+        guard_spec.loader.exec_module(guard_patch)
+        final_patches = final_api_patches(patch, routes_patch, errors_patch, guard_patch)
         verify_patched_source(root, final_patches)
         print(json.dumps({'litellm_version': importlib.metadata.version('litellm'),
                           'source': str(root), 'verified_patch_files': len(final_patches),

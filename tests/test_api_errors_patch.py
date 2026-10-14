@@ -103,15 +103,19 @@ def test_chain_order_matches_both_images():
             assert before == api.PATCHES[name][1], name
     harness = load('harness_for_errors', REPO / 'tests/api_contract_harness/run_image_contracts.py')
     routes = load('routes_for_errors', PATCHES / 'apply_routes_auth.py')
-    final = harness.final_api_patches(api, routes, module)
+    guard = load('guard_for_errors', PATCHES / 'apply_upstream_guard.py')
+    final = harness.final_api_patches(api, routes, module, guard)
     assert final[module.HELPER][1] == module.HELPER_SHA256
-    assert all(final[name][1] == after for name, (_, after, _) in module.PATCHES.items())
+    # The upstream guard runs after it and owns the final hash of the one file they share.
+    assert all(final[name][1] == (guard.PATCHES[name][1] if name in guard.PATCHES else after)
+               for name, (_, after, _) in module.PATCHES.items())
 
 
-def test_dockerfile_runs_it_last_and_ci_gate_ships_it():
+def test_dockerfile_runs_it_before_the_upstream_guard_and_ci_gate_ships_it():
     docker = (REPO / 'litellm/Dockerfile').read_text()
     runs = [line for line in docker.splitlines() if line.startswith('RUN python -I /usr/share/woow-litellm/patches/')]
-    assert runs[-1] == 'RUN python -I /usr/share/woow-litellm/patches/apply_api_errors.py'
-    assert runs[-2] == 'RUN python -I /usr/share/woow-litellm/patches/apply_login_throttle.py'
-    assert docker.index('COPY patches/ /usr/share/woow-litellm/patches/') < docker.index(runs[-1])
+    assert runs[-1] == 'RUN python -I /usr/share/woow-litellm/patches/apply_upstream_guard.py'
+    assert runs[-2] == 'RUN python -I /usr/share/woow-litellm/patches/apply_api_errors.py'
+    assert runs[-3] == 'RUN python -I /usr/share/woow-litellm/patches/apply_login_throttle.py'
+    assert docker.index('COPY patches/ /usr/share/woow-litellm/patches/') < docker.index(runs[-2])
     assert 'litellm/patches/apply_api_errors.py' in (REPO / 'tools/ci-api-contracts.sh').read_text()
