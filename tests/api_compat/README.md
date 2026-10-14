@@ -54,7 +54,38 @@ error bodies unchanged, provider errors keep their status and message.
 
 The patch runs last (after `apply_login_throttle.py`) on both the HA and PaaS chains and
 adds `proxy/woow_api_errors.py`. The image harness verifies its final hashes through
-`final_api_patches(api, routes, errors)`.
+`final_api_patches(api, routes, errors, guard)`.
+
+## Upstream guard contracts (`apply_upstream_guard.py`)
+
+`test_upstream_guard.py` uses the same real ASGI app, auth cache and recording spend writer,
+with an OpenRouter-shaped provider at the httpx transport whose fake api_base host picks the
+answer (`or400` … `or504`, `midstream`, `midstream-strcode`). Error bodies carry a fake
+gateway account (`user_id`), `error.metadata` (raw upstream text, provider name, BYOK flag,
+flagged input) and probe headers. It covers:
+
+- P0 leaks on chat, streaming before/after the first chunk, `/v1/completions`, embeddings,
+  Responses and `/v1/messages`, for the master key and a virtual key: no account, org,
+  request or generation id, metadata, flagged input, OpenRouter URL, `API Base`, `Messages:`,
+  64-hex value or non-allowlisted `llm_provider-*` header in the body or headers. The
+  `(status, type, code, param)` envelope equals a table recorded on the replayed HA 0.1.8
+  chain; only messages change. The spend-log failure row keeps its error code, class and the
+  upstream request id, and the raw text appears exactly once in the server log.
+- P1 output-token limits (OpenAI wording, `param`, no provider call, no spend row; the
+  Anthropic envelope on `/v1/messages`; warn/off switches) and budget admission (strict
+  refusal before the provider, 422 by default or 429 when configured, `x-should-retry: false`,
+  no key hash, reasoning reserve and input floor, bounded concurrent spend, resize switch,
+  unpriced-model policy).
+- P2 `reasoning_effort` forwarded for a model missing from the cost map, route-level
+  `reasoning` defaults and client overrides, and the empty-content/`length` pass-through.
+
+The patch runs last (after `apply_api_errors.py`) on both chains. It shares only
+`proxy/common_request_processing.py` with earlier installers, starting from the API errors
+output; its other seven targets are pristine 1.104.0 files. It adds
+`litellm_core_utils/woow_provider_errors.py` and `proxy/woow_request_guard.py`, and the image
+harness verifies its final hashes through `final_api_patches(api, routes, errors, guard)`.
+`x-litellm-model-api-base` on successful responses still names the internal api_base; that
+header is out of scope here and excluded from the leak scan.
 
 ## Build integration
 
