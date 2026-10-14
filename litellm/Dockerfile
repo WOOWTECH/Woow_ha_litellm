@@ -114,8 +114,10 @@ RUN python -I /usr/share/woow-litellm/patches/apply_restore_fix.py
 RUN python -I /usr/share/woow-litellm/patches/apply_login_throttle.py
 # M4 API error contracts (API-04/07/11/22); last, so both HA and PaaS chains give the same input.
 RUN python -I /usr/share/woow-litellm/patches/apply_api_errors.py
+# Upstream (OpenRouter) error scrubbing, token limits and budget admission; last, after api_errors.
+RUN python -I /usr/share/woow-litellm/patches/apply_upstream_guard.py
 
-ARG BUILD_VERSION=0.1.8
+ARG BUILD_VERSION=0.1.9
 ARG BUILD_REF=unknown
 ARG BUILD_ARCH=amd64
 # CI supplies the actual UTC build time; do not inherit the base image creation date.

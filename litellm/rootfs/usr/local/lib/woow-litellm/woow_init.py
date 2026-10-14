@@ -17,7 +17,8 @@ Run as ``/app/.venv/bin/python3 -I woow_init.py <command>`` through ``woow-init`
 
 Nothing here prints a secret. Paths can be redirected with WOOW_* variables for the unit tests
 (tests/test_init_scripts.py); in the add-on they come from the Supervisor-controlled container
-environment, which the add-on options cannot reach (WOOW_ is a reserved env_vars prefix).
+environment, which the add-on options cannot reach (WOOW_ is a reserved env_vars prefix; only
+the upstream-guard switches in GUARD_ENV may be set, with checked values).
 """
 
 from __future__ import annotations
@@ -81,6 +82,19 @@ RESERVED_PREFIXES = (
     "CHATGPT_", "WOOW_", "PRISMA_", "PYTHON", "LD_", "S6_", "SUPERVISOR_", "HASSIO_",
     "LITELLM_CONFIG_BUCKET_", "GRANIAN_",
 )
+
+# Upstream-guard switches (apply_upstream_guard.py) an operator may set through env_vars to roll a
+# behaviour back without a new image; every other WOOW_* name stays reserved. Allowed values, or
+# None for a non-negative token count.
+GUARD_ENV = {
+    "WOOW_PROVIDER_HEADERS": ("allowlist", "all"),
+    "WOOW_TOKEN_LIMIT_VALIDATION": ("enforce", "warn", "off"),
+    "WOOW_BUDGET_ADMISSION": ("strict", "full", "resize"),
+    "WOOW_BUDGET_UNPRICED": ("allow", "block_budgeted_keys"),
+    "WOOW_BUDGET_REASONING_RESERVE_TOKENS": None,
+    "WOOW_BUDGET_MIN_INPUT_TOKENS": None,
+}
+TOKEN_COUNT_RE = re.compile(r"^[0-9]{1,7}$")
 
 DEFAULT_OPTIONS = {
     "ui_username": "admin",
@@ -354,7 +368,14 @@ def _cron_error(expr: str) -> str | None:
 
 
 def reserved_env(key: str) -> bool:
-    return key in RESERVED_ENV or key.startswith(RESERVED_PREFIXES)
+    return key not in GUARD_ENV and (key in RESERVED_ENV or key.startswith(RESERVED_PREFIXES))
+
+
+def guard_env_error(key: str, value: str) -> str | None:
+    allowed = GUARD_ENV[key]
+    if allowed is None:
+        return None if TOKEN_COUNT_RE.fullmatch(value) else "must be a whole number of tokens (0 to 9999999)"
+    return None if value in allowed else "must be one of " + ", ".join(allowed)
 
 
 def master_key_error(value: str) -> str | None:
@@ -415,6 +436,8 @@ def validate_options(opts: dict) -> list[str]:
                 errors.append(f"env_vars[{i}]: {key} is listed twice")
             elif any(c in item["value"] for c in "\n\r\x00"):
                 errors.append(f"env_vars[{i}]: the value of {key} must be a single line")
+            elif key in GUARD_ENV and (err := guard_env_error(key, item["value"])):
+                errors.append(f"env_vars[{i}]: {key} {err}")
             if not item["value"] or item["value"] != item["value"].rstrip(" \t") or len(item["value"].encode()) > 4095:
                 errors.append(f"env_vars[{i}]: {key} must be nonempty, at most 4095 bytes, with no trailing space or tab")
             seen.add(key)
@@ -527,7 +550,8 @@ def litellm_config(opts: dict) -> str:
     ]
     if not opts["password_breach_check"]:
         lines.append("  password_policy_check_breached_passwords: false")
-    lines += ["litellm_settings:", "  drop_params: true", "  request_timeout: 600", ""]
+    # A budget refusal is a 429 (type stays budget_exceeded; the guard adds x-should-retry: false).
+    lines += ["litellm_settings:", "  drop_params: true", "  request_timeout: 600", "  budget_exceeded_status_code: 429", ""]
     return "\n".join(lines)
 
 

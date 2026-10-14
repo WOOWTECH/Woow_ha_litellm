@@ -200,6 +200,7 @@ def test_litellm_config_yaml(box):
     assert "use_x_forwarded_for" not in text
     assert "callbacks" not in text
     assert "password_policy_check_breached_passwords" not in text
+    assert "\nlitellm_settings:\n  drop_params: true\n  request_timeout: 600\n  budget_exceeded_status_code: 429\n" in text
     assert mode(box.run_dir / "litellm" / "config.yaml") == 0o640
     box.options(DEFAULT_OPTIONS, password_breach_check=False, spend_logs_retention="12h")
     box.ok("env")
@@ -258,6 +259,44 @@ def test_user_env_var_reaches_litellm_only_and_is_masked(box):
     assert box.envdir("litellm")["OPENAI_API_KEY"] == "sk-not-a-real-key-123"
     assert box.envdir("litellm")["LITELLM_LOG"] == "DEBUG"
     assert "OPENAI_API_KEY" not in box.envdir("litellm-migrate")
+
+
+GUARD_SWITCHES = {
+    "WOOW_PROVIDER_HEADERS": "all", "WOOW_TOKEN_LIMIT_VALIDATION": "off", "WOOW_BUDGET_ADMISSION": "resize",
+    "WOOW_BUDGET_UNPRICED": "block_budgeted_keys", "WOOW_BUDGET_REASONING_RESERVE_TOKENS": "4096",
+    "WOOW_BUDGET_MIN_INPUT_TOKENS": "0",
+}
+
+
+def test_upstream_guard_switches_are_the_only_settable_woow_env(box):
+    """The CHANGELOG's rollback switches work on HA: env_vars reach LiteLLM, never the migration job."""
+    box.options(DEFAULT_OPTIONS, env_vars=[{"key": k, "value": v} for k, v in GUARD_SWITCHES.items()])
+    res = box.run("env")
+    assert res.returncode == 0, res.stderr
+    box.ok("secrets")
+    lit = box.envdir("litellm")
+    assert {k: lit[k] for k in GUARD_SWITCHES} == GUARD_SWITCHES
+    assert not set(GUARD_SWITCHES) & set(box.envdir("litellm-migrate"))
+    for key in ("WOOW_PROXY_PORT", "WOOW_DATA_DIR", "WOOW_BUDGET_SOMETHING_ELSE"):
+        box.options(DEFAULT_OPTIONS, env_vars=[{"key": key, "value": "1"}])
+        res = box.run("env")
+        assert res.returncode == 1 and key in res.stderr and "cannot be overridden" in res.stderr
+
+
+@pytest.mark.parametrize(
+    "key, value",
+    [
+        ("WOOW_PROVIDER_HEADERS", "none"), ("WOOW_TOKEN_LIMIT_VALIDATION", "Enforce"),
+        ("WOOW_BUDGET_ADMISSION", "lenient"), ("WOOW_BUDGET_UNPRICED", "block"),
+        ("WOOW_BUDGET_REASONING_RESERVE_TOKENS", "-1"), ("WOOW_BUDGET_MIN_INPUT_TOKENS", "lots"),
+        ("WOOW_BUDGET_REASONING_RESERVE_TOKENS", "10000000"),
+    ],
+)
+def test_upstream_guard_switch_values_checked(box, key, value):
+    box.options(DEFAULT_OPTIONS, env_vars=[{"key": key, "value": value}])
+    res = box.run("env")
+    assert res.returncode == 1 and key in res.stderr
+    assert "must be one of" in res.stderr or "whole number of tokens" in res.stderr
 
 
 @pytest.mark.parametrize(
