@@ -240,3 +240,151 @@ def test_provider_header_allowlist(monkeypatch, name, allowed):
     assert errors.provider_header_allowed(name) is allowed
     monkeypatch.setenv('WOOW_PROVIDER_HEADERS', 'all')
     assert errors.provider_header_allowed(name) is True
+
+
+# Server log of the original text (WOOW_PROVIDER_ERROR_LOG) ------------------------------------
+SECRETS = {
+    'sk': 'sk-or-v1-' + '0123456789abcdef' * 4,
+    'bearer': 'Bearer FAKEbearerTOKEN0123456789',
+    'jwt': 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJGQUtFIn0.FAKEsignature012',
+    'api_key': 'api_key=FAKEapiKEYvalue0123',
+}
+
+
+class Records(logging.Handler):
+    """Attached to the LiteLLM logger itself: no dependence on propagation or pytest's caplog."""
+
+    def __init__(self):
+        super().__init__(logging.DEBUG)
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+    def raw(self):
+        return [r for r in self.records if r.getMessage().startswith('Woow upstream error scrubbed')]
+
+
+@pytest.fixture
+def server_log(monkeypatch):
+    monkeypatch.delenv('WOOW_PROVIDER_ERROR_LOG', raising=False)
+    logger = logging.getLogger('LiteLLM')
+    level = logger.level
+    logger.setLevel(logging.ERROR)  # what LITELLM_LOG=ERROR leaves enabled
+    handler = Records()
+    logger.addHandler(handler)
+    yield handler
+    logger.removeHandler(handler)
+    logger.setLevel(level)
+
+
+def test_raw_text_logged_once_at_error_with_secrets_redacted(server_log):
+    raw = openrouter(400, 'bad request ' + ' '.join(SECRETS.values()), {'raw': 'upstream said no', 'is_byok': True})
+    scrubbed = errors.scrub_provider_error('openrouter', raw, 400)
+    records = server_log.raw()
+    assert len(records) == 1 and records[0].levelno == logging.ERROR
+    logged = records[0].getMessage()
+    assert USER in logged and 'upstream said no' in logged and 'is_byok' in logged and 'status=400' in logged
+    assert not [name for name, secret in SECRETS.items() if secret.split('=')[-1].split()[-1] in logged]
+    assert 'api_key=' in logged and 'Bearer ' in logged  # the names stay, the values go
+    assert USER not in scrubbed and 'upstream said no' not in scrubbed
+
+
+@pytest.mark.parametrize('name', sorted(SECRETS))
+def test_redact_secrets(name):
+    secret = SECRETS[name]
+    value = secret.split('=')[-1].split()[-1]
+    redacted = errors.redact_secrets(f'before {secret} after')
+    assert value not in redacted and redacted.startswith('before ') and redacted.endswith(' after')
+    assert errors.redact_secrets(redacted) == redacted
+
+
+@pytest.mark.parametrize('text', ["'api_key': 'FAKEapiKEYvalue0123'", 'x-api-key: FAKEapiKEYvalue0123',
+                                  'API-KEY="FAKEapiKEYvalue0123"', 'https://h.invalid/v1?api_key=FAKEapiKEYvalue0123&x=1'])
+def test_redact_secrets_api_key_spellings(text):
+    assert 'FAKEapiKEYvalue0123' not in errors.redact_secrets(text)
+
+
+def test_server_log_text_truncates_after_redacting():
+    assert errors.server_log_text('x' * 5000) == 'x' * 2000
+    secret = SECRETS['sk']
+    straddling = 'a' * 1991 + ' ' + secret  # truncating first would keep 'sk-or-v1', too short to match
+    assert errors.redact_secrets(straddling[:2000]).endswith('sk-or-v1')
+    kept = errors.server_log_text(straddling)
+    assert kept == 'a' * 1991 + ' ' + '[redacted]'[:8] and 'sk-or' not in kept
+
+
+def test_long_raw_is_truncated_in_the_record(server_log):
+    raw = openrouter(502, 'Provider returned error', {'raw': 'r' * 5000})
+    errors.scrub_provider_error('openrouter', raw, 502)
+    [record] = server_log.raw()
+    logged = record.getMessage()
+    assert logged.split(' raw=', 1)[1] == errors.server_log_text(raw) and len(logged.split(' raw=', 1)[1]) == 2000
+
+
+@pytest.mark.parametrize('value,mode', [(None, 'raw'), ('', 'raw'), ('raw', 'raw'), (' RAW ', 'raw'), ('off', 'off'),
+                                        ('Off', 'off')])
+def test_provider_error_log_mode(monkeypatch, server_log, value, mode):
+    if value is None:
+        monkeypatch.delenv('WOOW_PROVIDER_ERROR_LOG', raising=False)
+    else:
+        monkeypatch.setenv('WOOW_PROVIDER_ERROR_LOG', value)
+    assert errors.provider_error_log_mode() == mode
+    assert not server_log.records
+
+
+def test_toggle_off_drops_the_record_but_still_scrubs(monkeypatch, server_log):
+    monkeypatch.setenv('WOOW_PROVIDER_ERROR_LOG', 'off')
+    raw = openrouter(429, 'Provider returned error', {'raw': 'upstream said no'})
+    assert scrubbed_message(errors.scrub_provider_error('openrouter', raw, 429)) == errors.MSG_429
+    message, _ = errors.stream_error_parts({'code': 502, 'message': 'm', 'metadata': {'raw': 'x'}, 'user_id': USER})
+    assert USER not in message
+    assert not server_log.records
+
+
+@pytest.mark.parametrize('value', ['verbose', 'none', 'true', '0'])
+def test_invalid_toggle_fails_loudly_and_keeps_raw(monkeypatch, server_log, value):
+    monkeypatch.setenv('WOOW_PROVIDER_ERROR_LOG', value)
+    assert errors.provider_error_log_mode() == 'raw'
+    errors.scrub_provider_error('openrouter', openrouter(400, 'bad'), 400)
+    invalid = [r for r in server_log.records if r.getMessage().startswith('Woow: invalid WOOW_PROVIDER_ERROR_LOG=')]
+    assert invalid and all(r.levelno == logging.ERROR and repr(value) in r.getMessage() for r in invalid)
+    assert len(server_log.raw()) == 1
+
+
+def test_one_record_when_the_compatible_mapping_sees_the_same_exception(server_log):
+    """exception_type() scrubs error_str, then _map_openai_exception scrubs the same exception's message."""
+    full = 'Error code: 403 - ' + repr({'error': {'message': 'Key limit exceeded', 'code': 403}, 'user_id': USER})
+    exc = SdkError(full, 403)
+    errors.scrub_provider_error('openai', full, 403)
+    errors.scrub_compatible_message('openai', full, exc)
+    errors.scrub_compatible_message('openai', 'Key limit exceeded', exc)
+    assert len(server_log.raw()) == 1
+    errors.scrub_provider_error('openai', full, 403)  # a retry is a new upstream error
+    assert len(server_log.raw()) == 2
+
+
+def test_compatible_mapping_alone_still_logs(server_log):
+    full = 'Error code: 402 - ' + repr({'error': {'message': 'more credits', 'code': 402}, 'user_id': USER})
+    errors.scrub_provider_error('openai', 'unrelated text', 402)
+    errors.scrub_compatible_message('openai', 'more credits', SdkError(full, 402))
+    [record] = server_log.raw()
+    assert USER in record.getMessage() and record.levelno == logging.ERROR
+
+
+def test_mid_stream_chunk_logged_once(server_log):
+    chunk = {'code': 429, 'message': 'Provider returned error', 'user_id': USER,
+             'metadata': {'raw': 'upstream rate limit ' + SECRETS['bearer'], 'headers': {'cf-ray': 'r'}}}
+    message, status = errors.stream_error_parts(chunk)
+    [record] = server_log.raw()
+    logged = record.getMessage()
+    assert record.levelno == logging.ERROR and USER in logged and 'upstream rate limit' in logged
+    assert 'FAKEbearerTOKEN' not in logged and 'status=429' in logged
+    # LiteLLM maps the raised OpenRouterException again: the rebuilt body is not a new error.
+    errors.scrub_provider_error('openrouter', 'litellm.RateLimitError: OpenrouterException - ' + message, status)
+    assert len(server_log.raw()) == 1
+
+
+def test_mid_stream_chunk_without_extra_fields_is_not_logged(server_log):
+    errors.stream_error_parts({'code': 502, 'message': 'Provider disconnected'})
+    assert not server_log.records

@@ -8,7 +8,8 @@
 
 ### 安全修正
 
-- 上游供應商（OpenRouter）的錯誤不再把閘道本身的帳號資訊轉給呼叫端：錯誤回應、串流中途的錯誤片段與用量紀錄（spend log，內部使用者看得到自己的紀錄）都不再含 `user_id`、`error.metadata`（上游原文、供應商名稱、BYOK 旗標、被標記的輸入）、帳號／組織／專案／請求／生成 ID、金鑰片段與 OpenRouter 網址。`openrouter/` 路由與以 `openai/` 指向 OpenRouter 的路由（chat、`/v1/completions`、`/v1/embeddings`，含串流）都適用；其他供應商的錯誤文字不變。HTTP 狀態碼與錯誤的 `type`／`code`／`param` 不變，只改訊息文字；原文只留在伺服器記錄（WARNING）。
+- 上游供應商（OpenRouter）的錯誤不再把閘道本身的帳號資訊轉給呼叫端：錯誤回應、串流中途的錯誤片段與用量紀錄（spend log，內部使用者看得到自己的紀錄）都不再含 `user_id`、`error.metadata`（上游原文、供應商名稱、BYOK 旗標、被標記的輸入）、帳號／組織／專案／請求／生成 ID、金鑰片段與 OpenRouter 網址。`openrouter/` 路由與以 `openai/` 指向 OpenRouter 的路由（chat、`/v1/completions`、`/v1/embeddings`，含串流）都適用；其他供應商的錯誤文字不變。HTTP 狀態碼與錯誤的 `type`／`code`／`param` 不變，只改訊息文字；原文只留在伺服器記錄。
+- 上游錯誤原文只寫進伺服器記錄：每個被清洗的錯誤（含串流中途的錯誤片段）一筆 ERROR，所以 `log_level: error`（PaaS 的 `LITELLM_LOG=ERROR`）也會保留；先遮蔽金鑰（`sk-…`、Bearer、JWT、`api_key=` 等）再截到 2000 字，不會進回應、用量紀錄或回應標頭。`WOOW_PROVIDER_ERROR_LOG=off` 可不記（見下方退回開關）。
 - 上游回 401／402／403／408／429／504 時改用固定說明文字，例如上游憑證被拒時會說明「呼叫端的 API 金鑰有效，請聯絡管理員」；內容審查（403）只列出原因，不帶被標記的輸入。400／404／413／422 與其他 5xx 保留上游訊息本身，400 類若上游只回 `Provider returned error`，會附上清洗並截斷後的具體原因。
 - 供應商的回應標頭只轉送 `llm_provider-x-ratelimit-*` 與 `llm_provider-retry-after`；`cf-ray`、`x-request-id` 等其他標頭不再轉給呼叫端（管理端用量紀錄仍保留上游 request id）。
 - 非管理員金鑰呼叫 `/health` 時，端點結果不再帶 `raw_request_typed_dict`（內含內部 api_base）與 stack trace；`error` 只留清洗過的第一行，並遮掉該部署的 api_base 與主機名。
@@ -28,6 +29,7 @@
 `WOOW_` 開頭的其他名稱仍是保留字；下列開關的值不合法時，附加元件會拒絕啟動並指出欄位。
 
 - `WOOW_PROVIDER_HEADERS=all`：恢復轉送所有供應商回應標頭。
+- `WOOW_PROVIDER_ERROR_LOG=raw`（預設，伺服器記錄保留遮蔽後的上游原文）｜`off`（不記原文）。
 - `WOOW_TOKEN_LIMIT_VALIDATION=enforce`（預設）｜`warn`（照舊轉送並記警告）｜`off`（與前一版相同）。
 - `WOOW_BUDGET_ADMISSION=strict`（預設，見上方「輸入＋推理預留」的准入）｜`full`（完整預估超過剩餘預算就拒絕，沒帶 `max_tokens` 以 16384 token 估算，小額度的尾段會用不到）｜`resize`（恢復上游：只在剩餘預算為 0 時拒絕）。
 - `WOOW_BUDGET_REASONING_RESERVE_TOKENS`（預設 2048）與 `WOOW_BUDGET_MIN_INPUT_TOKENS`（預設 256）；也可在模型的 `model_info.woow_reasoning_output_reserve_tokens`／`model_info.woow_min_input_tokens` 逐模型設定。
