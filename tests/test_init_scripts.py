@@ -200,6 +200,7 @@ def test_litellm_config_yaml(box):
     assert "use_x_forwarded_for" not in text
     assert "callbacks" not in text
     assert "password_policy_check_breached_passwords" not in text
+    assert "\nlitellm_settings:\n  drop_params: true\n  request_timeout: 600\n  budget_exceeded_status_code: 429\n" in text
     assert mode(box.run_dir / "litellm" / "config.yaml") == 0o640
     box.options(DEFAULT_OPTIONS, password_breach_check=False, spend_logs_retention="12h")
     box.ok("env")

@@ -18,6 +18,7 @@
 - 生成上限欄位必須是 1 到 2147483647 的整數：chat 的 `max_tokens`／`max_completion_tokens`、`/v1/completions` 與 `/v1/messages` 的 `max_tokens`、Responses 的 `max_output_tokens`。`-1`、`0`、`1.5`、`"10"`、`true` 等在呼叫上游前就回 400（OpenAI 格式，`param` 為欄位名；`/v1/messages` 為 Anthropic 格式），不計費也不寫用量紀錄。`16.0` 這類整數值照常接受；Responses 的 1–15 仍照上游提高為 16。
 - 有預算上限的金鑰：預估費用超過剩餘預算時直接拒絕，不再縮小預留後放行；推理模型（`model_info.supports_reasoning: true`）至少預留 2048 個輸出 token 與 256 個輸入 token，請求明確關閉推理（`reasoning.enabled: false`、`reasoning.effort` 或 `reasoning_effort` 為 `none`）時不加推理預留；負數、0 或布林值的 `max_tokens` 不再讓預留變小。
 - 預算超出的錯誤加上 `x-should-retry: false` 標頭，訊息不再回顯金鑰雜湊或實體 ID。
+- 預算超出的 HTTP 狀態碼由 422 改為 429（錯誤 `type` 仍是 `budget_exceeded`），由 LiteLLM 設定 `litellm_settings.budget_exceeded_status_code: 429` 控制，可單獨退回。
 - OpenRouter 路由的 `reasoning_effort` 對所有模型都會轉送；之前不在 LiteLLM 費用表裡的新模型，在 `drop_params: true` 下會被靜默丟掉。
 - 有預算上限的金鑰使用未設定單價的模型時，伺服器記錄 `event=unpriced_budgeted_request` 警告（預設照常放行）。
 

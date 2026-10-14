@@ -527,7 +527,8 @@ def litellm_config(opts: dict) -> str:
     ]
     if not opts["password_breach_check"]:
         lines.append("  password_policy_check_breached_passwords: false")
-    lines += ["litellm_settings:", "  drop_params: true", "  request_timeout: 600", ""]
+    # A budget refusal is a 429 (type stays budget_exceeded; the guard adds x-should-retry: false).
+    lines += ["litellm_settings:", "  drop_params: true", "  request_timeout: 600", "  budget_exceeded_status_code: 429", ""]
     return "\n".join(lines)
 
 
