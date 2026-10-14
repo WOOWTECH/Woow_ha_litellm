@@ -35,6 +35,15 @@ def verify_patched_source(root, patches):
             raise RuntimeError('Built image API patch mismatch: ' + name)
 
 
+def final_api_patches(api_patch, routes_patch):
+    patches = dict(api_patch.PATCHES)
+    before, after, edits = patches[routes_patch.TARGET]
+    if after != routes_patch.EXPECTED:
+        raise RuntimeError('Routes auth patch must follow the exact API patch output')
+    patches[routes_patch.TARGET] = (before, routes_patch.RESULT, edits)
+    return patches
+
+
 def offline_only(event, args):
     if event in {'socket.connect', 'socket.connect_ex', 'socket.getaddrinfo', 'socket.bind',
                  'socket.sendto', 'subprocess.Popen', 'os.system', 'os.posix_spawn',
@@ -78,7 +87,10 @@ def main():
         patch_spec = importlib.util.spec_from_file_location('api_patch', HERE / 'apply_api_compat.py')
         patch = importlib.util.module_from_spec(patch_spec)
         patch_spec.loader.exec_module(patch)
-        verify_patched_source(root, patch.PATCHES)
+        routes_spec = importlib.util.spec_from_file_location('routes_patch', HERE / 'apply_routes_auth.py')
+        routes_patch = importlib.util.module_from_spec(routes_spec)
+        routes_spec.loader.exec_module(routes_patch)
+        verify_patched_source(root, final_api_patches(patch, routes_patch))
         print(json.dumps({'litellm_version': importlib.metadata.version('litellm'),
                           'source': str(root), 'verified_patch_files': len(patch.PATCHES),
                           'harness': {r['name']: r['version'] for r in lock}}, sort_keys=True), flush=True)
