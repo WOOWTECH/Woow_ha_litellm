@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.1.9
+
+2026-10-14
+
+本版是獨立的安全修補，與 PaaS 1158 及前一版的 M4 API 錯誤契約發版無關。
+
+### 安全修正
+
+- 上游供應商（OpenRouter）的錯誤不再把閘道本身的帳號資訊轉給呼叫端：錯誤回應、串流中途的錯誤片段與用量紀錄（spend log，內部使用者看得到自己的紀錄）都不再含 `user_id`、`error.metadata`（上游原文、供應商名稱、BYOK 旗標、被標記的輸入）、請求／生成 ID、金鑰片段與 OpenRouter 網址。HTTP 狀態碼與錯誤的 `type`／`code`／`param` 不變，只改訊息文字；原文只留在伺服器記錄（WARNING）。
+- 上游回 401／402／403／408／429／504 時改用固定說明文字，例如上游憑證被拒時會說明「呼叫端的 API 金鑰有效，請聯絡管理員」；內容審查（403）只列出原因，不帶被標記的輸入。400／404／413／422 與其他 5xx 保留上游訊息本身，400 類若上游只回 `Provider returned error`，會附上清洗並截斷後的具體原因。
+- 供應商的回應標頭只轉送 `llm_provider-x-ratelimit-*` 與 `llm_provider-retry-after`；`cf-ray`、`x-request-id` 等其他標頭不再轉給呼叫端（管理端用量紀錄仍保留上游 request id）。
+- OpenRouter 串流中途錯誤的代碼是字串（如 `server_error`）時，不再出現 `invalid literal for int()`，改回 500；`rate_limit*` 回 429。
+
+### 修正
+
+- 生成上限欄位必須是 1 到 2147483647 的整數：chat 的 `max_tokens`／`max_completion_tokens`、`/v1/completions` 與 `/v1/messages` 的 `max_tokens`、Responses 的 `max_output_tokens`。`-1`、`0`、`1.5`、`"10"`、`true` 等在呼叫上游前就回 400（OpenAI 格式，`param` 為欄位名；`/v1/messages` 為 Anthropic 格式），不計費也不寫用量紀錄。`16.0` 這類整數值照常接受；Responses 的 1–15 仍照上游提高為 16。
+- 有預算上限的金鑰：預估費用超過剩餘預算時直接拒絕，不再縮小預留後放行；推理模型（`model_info.supports_reasoning: true`）至少預留 2048 個輸出 token 與 256 個輸入 token，請求明確關閉推理（`reasoning.enabled: false`、`reasoning.effort` 或 `reasoning_effort` 為 `none`）時不加推理預留；負數、0 或布林值的 `max_tokens` 不再讓預留變小。
+- 預算超出的錯誤加上 `x-should-retry: false` 標頭，訊息不再回顯金鑰雜湊或實體 ID。
+- OpenRouter 路由的 `reasoning_effort` 對所有模型都會轉送；之前不在 LiteLLM 費用表裡的新模型，在 `drop_params: true` 下會被靜默丟掉。
+- 有預算上限的金鑰使用未設定單價的模型時，伺服器記錄 `event=unpriced_budgeted_request` 警告（預設照常放行）。
+
+### 退回開關（在附加元件設定的 `env_vars` 設定，不需重建映像）
+
+- `WOOW_PROVIDER_HEADERS=all`：恢復轉送所有供應商回應標頭。
+- `WOOW_TOKEN_LIMIT_VALIDATION=enforce`（預設）｜`warn`（照舊轉送並記警告）｜`off`（與前一版相同）。
+- `WOOW_BUDGET_ADMISSION=strict`（預設）｜`resize`（恢復上游的縮小預留行為）。
+- `WOOW_BUDGET_REASONING_RESERVE_TOKENS`（預設 2048）與 `WOOW_BUDGET_MIN_INPUT_TOKENS`（預設 256）；也可在模型的 `model_info.woow_reasoning_output_reserve_tokens`／`model_info.woow_min_input_tokens` 逐模型設定。
+- `WOOW_BUDGET_UNPRICED=allow`（預設）｜`block_budgeted_keys`（有預算的金鑰不得使用未定價模型，回 400）。
+
+### 建議的模型設定
+
+- OpenRouter 推理模型的路由：用頂層 `litellm_params.reasoning: {"enabled": false}` 預設關閉推理（不要放在 `extra_body`，否則呼叫端無法覆寫），並設 `model_info.supports_reasoning: true` 與單價；需要推理的另開 `<模型>:thinking` 路由。
+- OpenRouter 路由一律填上單價；小預算的金鑰設 `max_parallel_requests: 1`。單一 worker 下預算保證是「每筆最多超出約推理預留的費用」；多 worker 或多副本前須先接 Redis。
+
 ## 0.1.8
 
 2026-10-14
