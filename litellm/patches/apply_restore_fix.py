@@ -7,7 +7,7 @@ import hashlib
 from pathlib import Path
 import sys
 
-SOURCE_SHA256 = "559c19946ec03206578f27d7aebbf2ab32c2451dab3c409de8f69b125eb88eb3"
+SOURCE_SHA256 = "388f5d8618790eff55f5ab5aa32b84b02594445616491e6b2c00ddd0ca1e1af6"
 EDITS = (
     (
         '''    kept, restored = [], []
