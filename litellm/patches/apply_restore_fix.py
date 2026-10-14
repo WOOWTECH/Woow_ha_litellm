@@ -7,21 +7,25 @@ import hashlib
 from pathlib import Path
 import sys
 
-SOURCE_SHA256 = "20faa24be883672ffa923cb6bcb3f3a42a3a7111c8191d323d6106d571c856df"
+SOURCE_SHA256 = "559c19946ec03206578f27d7aebbf2ab32c2451dab3c409de8f69b125eb88eb3"
 EDITS = (
     (
         '''    kept, restored = [], []
-    for account in file_accounts():
-        record = account_record(account)
-        if _has_tokens(record):
-            _db_save_logged(account, record)
-            kept.append(account)
+    try:
+        stored = db_accounts()
 ''',
         '''    kept, restored = [], []
     persistence_failed = False
-    for account in file_accounts():
-        record = account_record(account)
-        if _has_tokens(record):
+    try:
+        stored = db_accounts()
+''',
+    ),
+    (
+        '''        elif _has_tokens(record):
+            _db_save_logged(account, record)
+            kept.append(account)
+''',
+        '''        elif _has_tokens(record):
             try:
                 db_save(account, record)
             except Exception:  # noqa: BLE001 — keep the newest local tokens on failure

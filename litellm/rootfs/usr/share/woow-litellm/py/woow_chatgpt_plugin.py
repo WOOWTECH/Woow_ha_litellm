@@ -293,17 +293,39 @@ def install(app) -> None:
     async def accounts_remove(request: Request, body: dict = Body(...), _=Depends(admin)):
         """Remove an account: its models, its credentials and its sign-in. The default account
         keeps its models (only the sign-in is forgotten)."""
+        import httpx
+
         account = account_param(body.get("account"))
         removed_models, removed_credentials, failed = [], [], []
+
+        def incomplete():
+            return {"ok": False, "account": account, "state": "error", "error": "dependent_delete_failed",
+                    "removed_models": removed_models, "removed_credentials": removed_credentials, "failed": failed}
         if account != core.DEFAULT_ACCOUNT:
             for d in _deployments():
-                if d["account"] == account and d["id"]:
+                if d["account"] != account:
+                    continue
+                if not d["id"]:
+                    failed.append(d["model_name"])
+                    continue
+                try:
                     r = await _self_call(request, "POST", "/model/delete", {"id": d["id"]})
+                except httpx.HTTPError:
+                    failed.append(d["model_name"])
+                else:
                     (removed_models if r.status_code == 200 else failed).append(d["model_name"])
+            if failed:
+                return incomplete()
             for name, acct in _credential_accounts().items():
                 if acct == account:
-                    r = await _self_call(request, "DELETE", f"/credentials/{quote(name, safe='')}")
-                    (removed_credentials if r.status_code == 200 else failed).append(name)
+                    try:
+                        r = await _self_call(request, "DELETE", f"/credentials/{quote(name, safe='')}")
+                    except httpx.HTTPError:
+                        failed.append(name)
+                    else:
+                        (removed_credentials if r.status_code == 200 else failed).append(name)
+            if failed:
+                return incomplete()
         out = await asyncio.to_thread(core.disconnect, account)
         return {**out, "removed_models": removed_models, "removed_credentials": removed_credentials, "failed": failed}
 
@@ -371,10 +393,16 @@ def install(app) -> None:
             raise HTTPException(status_code=400, detail="action must be add or remove")
         mine = [d for d in _deployments() if d["account"] == account]
         if action == "remove":
-            names = {_as_model(n) for n in (wanted or []) if isinstance(n, str)} | {n for n in (wanted or []) if isinstance(n, str)}
+            if not isinstance(wanted, list) or not all(isinstance(n, str) for n in wanted):
+                raise HTTPException(status_code=400, detail="models must be a list of names")
+            aliases = {d["model_name"] for d in mine}
+            exact_names = {n for n in wanted if n in aliases}
+            # The model picker also sends backend ids for prefixed deployments. Keep
+            # that behavior only when the requested name is not an exact alias.
+            backend_names = {_as_model(n) for n in wanted if n not in aliases}
             removed, failed = [], []
             for d in mine:
-                if (d["model"] in names or d["model_name"] in names) and d["id"]:
+                if (d["model_name"] in exact_names or d["model"] in backend_names) and d["id"]:
                     r = await _self_call(request, "POST", "/model/delete", {"id": d["id"]})
                     (removed if r.status_code == 200 else failed).append(d["model_name"])
             return {"removed": removed, "failed": failed}
@@ -789,7 +817,7 @@ function render(s){
     row(dl,"ChatGPT 帳號",s.email||"—"); row(dl,"方案",plan(s.plan_type)||"—");
     row(dl,"訂閱有效至",s.subscription_active_until?new Date(s.subscription_active_until).toLocaleDateString("zh-TW"):"—");
     row(dl,"存取憑證有效至（會自動更新）",fmtTime(s.access_token_expires_at));
-    row(dl,"保存位置",s.storage==="database"?"LiteLLM 資料庫（重啟不掉）":"檔案（請確認目錄是持久化的）");
+    row(dl,"保存位置",(s.persist_error || s.persisted===false)?"保存尚未完成，請先處理下方異常":(s.storage==="database"?"LiteLLM 資料庫（重啟不掉）":"檔案（請確認目錄是持久化的）"));
     $("btnConnect").textContent="重新登入"; $("btnDisconnect").classList.remove("hidden");
     $("modelsCard").classList.remove("hidden");
   }else{
@@ -797,6 +825,10 @@ function render(s){
     row(dl,"狀態","尚未連接 ChatGPT");
     $("btnConnect").textContent="連接 ChatGPT"; $("btnDisconnect").classList.add("hidden");
     $("modelsCard").classList.add("hidden");
+  }
+  if(s.persist_error || s.persisted===false){
+    badge.innerHTML='<span class="badge warn">登入保存異常</span>';
+    row(dl,"保存狀態","登入資料尚未完整保存，請修復儲存空間或資料庫後重試。");
   }
   $("btnRemoveAcct").classList.toggle("hidden",isDefault||(!s.connected&&!(s.credentials||[]).length&&!(s.models||[]).length));
   if(s.models&&s.models.length) row(dl,"已加入 LiteLLM 的模型",[...new Set(s.models.map(m=>m.model_name))].join("、"));
@@ -902,11 +934,11 @@ $("btnFinish").onclick=async()=>{ const v=$("authInput").value.trim(); if(!v){ s
 $("btnStart").onclick=async()=>{ $("btnStart").disabled=true; say("向 OpenAI 取得代碼…");
   try{ const r=await api("POST","/start",{account:cur}); if(!r.ok){ say("取得代碼失敗（"+(r.error||"")+"），稍後再試。","err"); $("btnStart").disabled=false; return; } say(""); showCode(r.pending); }
   catch(e){ say(e.message,"err"); $("btnStart").disabled=false; } };
-$("btnCopy").onclick=()=>{ try{ navigator.clipboard.writeText($("userCode").textContent); say("已複製代碼。","ok"); }catch(e){} };
+$("btnCopy").onclick=async()=>{ try{ await navigator.clipboard.writeText($("userCode").textContent); say("已複製代碼。","ok"); }catch(e){ say("無法自動複製，請選取代碼後手動複製。","err"); } };
 $("btnDisconnect").onclick=async()=>{ if(!confirm("中斷後這台 LiteLLM 會忘記這個 ChatGPT 帳號的登入（模型與憑證保留；不會撤銷 OpenAI 那邊的授權）。確定？")) return;
-  try{ await api("POST","/disconnect",{account:cur}); remote=[]; say("已中斷連接。","ok"); refresh(); }catch(e){ say(e.message,"err"); } };
+  try{ const r=await api("POST","/disconnect",{account:cur}); if(!r.ok) throw new Error("中斷失敗，登入保留；請重試。"); remote=[]; say("已中斷連接。","ok"); refresh(); }catch(e){ say(e.message,"err"); } };
 $("btnRemoveAcct").onclick=async()=>{ if(!confirm("移除這個帳號：刪除它在 LiteLLM 的模型與憑證，並忘記登入。確定？")) return;
-  try{ const r=await api("POST","/accounts/remove",{account:cur}); say("已移除（模型 "+(r.removed_models||[]).length+" 個、憑證 "+(r.removed_credentials||[]).length+" 個）。","ok"); pendingName=null; await select("default"); }catch(e){ say(e.message,"err"); } };
+  try{ const r=await api("POST","/accounts/remove",{account:cur}); if(!r.ok || (r.failed||[]).length) throw new Error("部分移除失敗，登入保留；請重試。"+(r.failed||[]).join("、")); say("已移除（模型 "+(r.removed_models||[]).length+" 個、憑證 "+(r.removed_credentials||[]).length+" 個）。","ok"); pendingName=null; await select("default"); }catch(e){ say(e.message,"err"); } };
 $("btnNew").onclick=()=>{ $("newBox").classList.remove("hidden"); $("newName").focus(); };
 $("btnNewCancel").onclick=()=>{ $("newBox").classList.add("hidden"); $("newName").value=""; };
 $("btnNewGo").onclick=async()=>{ const name=$("newName").value.trim(); if(!name){ say("請輸入名稱。","warn"); return; }
@@ -955,7 +987,50 @@ except Exception:  # noqa: BLE001 — imported outside LiteLLM (tests, the CLI)
 
 
 class WoowChatGPT(_Base):
-    """No-op logger: LiteLLM's callbacks list is only the hook that loads this module."""
+    """Load the plugin and preserve server-configured ChatGPT account bindings."""
+
+    # Run this security boundary even when the proxy requests content-enforcing hooks only.
+    enforces_request_content = True
+
+    async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
+        # This is the proxy's pre-routing seam: deployment/credential values have not
+        # been merged yet. The local admin /api/test calls LiteLLM directly instead.
+        model = str(data.get("model") or "")
+        models = {model}
+        # Only authenticated key/team metadata may resolve public model aliases.
+        for field in ("aliases", "team_model_aliases"):
+            aliases = getattr(user_api_key_dict, field, None)
+            if isinstance(aliases, dict):
+                models.update(aliases[name] for name in tuple(models)
+                              if isinstance(aliases.get(name), str))
+        # Router settings resolve global aliases after this hook. Use the same
+        # pinned resolver for both string and {model, hidden} entry shapes.
+        from litellm.router_utils.common_utils import resolve_model_group_alias
+
+        proxy = sys.modules.get("litellm.proxy.proxy_server")
+        router_aliases = getattr(getattr(proxy, "llm_router", None), "model_group_alias", None)
+        for name in tuple(models):
+            target = resolve_model_group_alias(router_aliases, name)
+            if target:
+                models.add(target)
+        key = data.get("api_key")
+        credential = data.get("litellm_credential_name")
+        selects_chatgpt = (
+            any(name.startswith("chatgpt/") for name in models)
+            or data.get("custom_llm_provider") == "chatgpt"
+            or (isinstance(key, str) and key.startswith(core.ACCOUNT_REF_PREFIX))
+            or core._looks_like_access_token(key)
+            or (isinstance(credential, str) and credential in _credential_accounts())
+            or any(d["model_name"] in models for d in _deployments())
+        )
+        if selects_chatgpt and any(
+            data.get(field) is not None
+            for field in ("api_key", "litellm_credential_name", "custom_llm_provider")
+        ):
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=403, detail="ChatGPT account selection must use the configured model")
+        return data
 
 
 if "litellm.proxy.proxy_server" in sys.modules:
@@ -1026,7 +1101,7 @@ function planName(a){ return a&&a.plan_type? "ChatGPT "+a.plan_type.charAt(0).to
 function who(a){ return a&&a.connected?((a.email||"ChatGPT 帳號")+(planName(a)?" · "+planName(a):"")):"尚未連接"; }
 function label(a){ return a.account==="default"?"預設帳號":((a.credentials&&a.credentials[0])||a.account); }
 function el(tag,attrs,html){ var e=document.createElement(tag); for(var k in (attrs||{})) e.setAttribute(k,attrs[k]); if(html!=null) e.innerHTML=html; return e; }
-function txt(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
+function txt(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
 function toast(msg){ var t=el("div",{"class":"woow-cg-toast"}); t.textContent=msg; document.body.appendChild(t); setTimeout(function(){ t.remove(); },5000); }
 
 window.addEventListener("message",function(e){
@@ -1055,6 +1130,9 @@ css.textContent=[
 ".woow-cg-badge{font-size:12px;margin-left:8px;padding:1px 8px;border-radius:999px;border:1px solid currentColor;cursor:pointer;background:transparent;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis}",
 ".woow-cg-overlay{position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px}",
 ".woow-cg-sheet{background:#fff;color:#111;border-radius:12px;width:min(880px,100%);height:min(90vh,920px);display:flex;flex-direction:column;overflow:hidden}",
+"@media (max-width:640px){.woow-cg-model-content{padding-left:12px!important;padding-right:12px!important}.woow-cg-model-frame{margin-left:8px!important;margin-right:8px!important}",
+".woow-cg-model-tabbar{flex-wrap:wrap!important}.woow-cg-model-tabscroll{flex:1 0 100%!important;width:100%;min-width:0;mask-image:none!important}",
+".woow-cg-model-tablist{display:flex!important;flex-wrap:wrap!important;width:100%!important;min-width:0}.woow-cg-model-tablist>[role=tab]{flex:0 1 auto!important;min-width:0;max-width:100%;height:auto!important;white-space:normal!important;overflow-wrap:anywhere}}",
 "@media (prefers-color-scheme:dark){.woow-cg-sheet{background:#171a21;color:#e6e8eb}}",
 ".woow-cg-sheet header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid rgba(127,127,127,.3);font-weight:600}",
 ".woow-cg-sheet iframe{flex:1;border:0;width:100%}",
@@ -1217,7 +1295,7 @@ function showDevice(dialog,sub){
       '<p class="woow-cg-muted">等你登入中… <span class="woow-cg-left"></span>（會自動偵測）。若 OpenAI 顯示不允許裝置代碼，請到 ChatGPT「設定 → 安全性」開啟，或改用瀏覽器登入。</p>';
     var a=sub.querySelector(".woow-cg-verify"); a.href=p.verification_url; a.textContent=p.verification_url;
     sub.querySelector(".woow-cg-code").textContent=p.user_code;
-    sub.querySelector(".woow-cg-copy").onclick=function(e){ e.preventDefault(); try{ navigator.clipboard.writeText(p.user_code); }catch(x){} };
+    sub.querySelector(".woow-cg-copy").onclick=async function(e){ e.preventDefault(); try{ await navigator.clipboard.writeText(p.user_code); toast("已複製代碼。"); }catch(x){ toast("無法自動複製，請選取代碼後手動複製。"); } };
     var left=sub.querySelector(".woow-cg-left");
     var tick=function(){ var s=Math.max(0,Math.round(p.expires_at-Date.now()/1000)); left.textContent="剩 "+Math.floor(s/60)+" 分 "+String(s%60).padStart(2,"0")+" 秒"; };
     tick(); timers.push(setInterval(tick,1000));
@@ -1349,7 +1427,21 @@ function ensureDeleteHint(){
     var host=inp.closest("[data-slot=input-group]")||inp; host.parentNode.insertBefore(hint,host);
   });
 }
-function paintAll(){ credentialDialogs().forEach(ensurePanel); ensureBadges(); ensureDeleteHint(); }
+// The Models tab strip shares a flex row with a fixed refresh control. At phone
+// widths that control can consume the whole row, leaving a zero-width scroller.
+// Keep the actual tabs and their handlers; only this known tab group gets mobile CSS.
+function ensureModelTabs(){
+  Array.prototype.forEach.call(document.querySelectorAll('[role=tab]'),function(tab){
+    if(tab.textContent.trim()!=="LLM Credentials") return;
+    var list=tab.closest('[role=tablist]'), port=list&&list.parentElement, bar=port&&port.parentElement;
+    if(!bar || getComputedStyle(bar).display!=="flex" || !/auto|scroll/.test(getComputedStyle(port).overflowX)) return;
+    list.classList.add("woow-cg-model-tablist"); port.classList.add("woow-cg-model-tabscroll"); bar.classList.add("woow-cg-model-tabbar");
+    var content=bar.closest('.p-8'), frame=content&&content.parentElement;
+    if(content) content.classList.add("woow-cg-model-content");
+    if(frame && frame.classList.contains('mx-4')) frame.classList.add("woow-cg-model-frame");
+  });
+}
+function paintAll(){ ensureModelTabs(); credentialDialogs().forEach(ensurePanel); ensureBadges(); ensureDeleteHint(); }
 var queued=false;
 function schedule(){ if(queued) return; queued=true; requestAnimationFrame(function(){ queued=false; paintAll(); }); }
 new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true});
@@ -1410,7 +1502,7 @@ window.fetch=function(input,init){
         var gone=credOf(name);
         return origFetch(input,init).then(function(resp){
           if(resp.ok && gone.account!=="default" && (gone.credentials||[]).length<=1){
-            api("POST","/accounts/remove",{account:gone.account}).then(function(r){ toast("已一併移除這個 ChatGPT 帳號的登入與 "+((r.removed_models||[]).length)+" 個模型。"); loadAccounts(true); })
+            api("POST","/accounts/remove",{account:gone.account}).then(function(r){ if(!r.ok || (r.failed||[]).length) throw new Error("部分移除失敗，登入保留；請重試。"); toast("已一併移除這個 ChatGPT 帳號的登入與 "+((r.removed_models||[]).length)+" 個模型。"); loadAccounts(true); })
               .catch(function(){ loadAccounts(true); });
           } else loadAccounts(true);
           return resp;

@@ -113,7 +113,7 @@ RUN python -I /usr/share/woow-litellm/patches/apply_restore_fix.py
 # Fixed failure thresholds and redacted security warnings on the pinned login module.
 RUN python -I /usr/share/woow-litellm/patches/apply_login_throttle.py
 
-ARG BUILD_VERSION=0.1.6
+ARG BUILD_VERSION=0.1.7
 ARG BUILD_REF=unknown
 ARG BUILD_ARCH=amd64
 # CI supplies the actual UTC build time; do not inherit the base image creation date.
@@ -132,7 +132,7 @@ LABEL org.opencontainers.image.title="Woow LiteLLM" \
       io.hass.version=${BUILD_VERSION} \
       io.woowtech.litellm.version=1.104.0 \
       io.woowtech.litellm.digest=sha256:843a35c72a832e9c062b66111b1aa54e6588fb32c3ab400d3e20ea9c5fa656a0 \
-      io.woowtech.woow-plugin.source=0.3.0@dcd929edddbae4e4b284c9447568c6e10aff2c34
+      io.woowtech.woow-plugin.source=0.3.2@82388ef5c70c294fa7d089053c84011e86150c59
 
 # start-period 45 min ≥ Supervisor retry 1 + pre-upgrade dump 10 + migration 25 + LiteLLM 5 (§7.6).
 HEALTHCHECK --start-period=45m --start-interval=10s --interval=60s --timeout=10s --retries=3 \

@@ -207,7 +207,7 @@ def _has_tokens(record: dict | None) -> bool:
 
 
 def account_record(account: str) -> dict | None:
-    return _read_json(auth_path(account))
+    return _PENDING_AUTH_WRITES.get(os.path.abspath(auth_path(account))) or _read_json(auth_path(account))
 
 
 # ── database copy ─────────────────────────────────────────────────────────────
@@ -327,14 +327,18 @@ def db_save(account: str, record: dict) -> None:
             )
 
 
-def db_delete(account: str) -> None:
-    if not db_available():
+def db_delete(account: str, connection=None) -> None:
+    """Delete both schema generations in the caller's transaction when supplied."""
+    if connection is None:
+        if not db_available():
+            return
+        with _connect() as conn, conn.transaction():
+            db_delete(account, conn)
         return
-    with _connect() as conn:
-        if _table_exists(conn, "chatgpt_accounts"):
-            conn.execute("DELETE FROM woow_platform.chatgpt_accounts WHERE account = %s", (account,))
-        if account == DEFAULT_ACCOUNT and _table_exists(conn, "chatgpt_auth"):
-            conn.execute("DELETE FROM woow_platform.chatgpt_auth WHERE id = 1")
+    if _table_exists(connection, "chatgpt_accounts"):
+        connection.execute("DELETE FROM woow_platform.chatgpt_accounts WHERE account = %s", (account,))
+    if account == DEFAULT_ACCOUNT and _table_exists(connection, "chatgpt_auth"):
+        connection.execute("DELETE FROM woow_platform.chatgpt_auth WHERE id = 1")
 
 
 def _db_save_logged(account: str, record: dict) -> bool:
@@ -342,7 +346,7 @@ def _db_save_logged(account: str, record: dict) -> bool:
         db_save(account, record)
         return True
     except Exception as exc:  # noqa: BLE001 — the file is written; a restart would fall back to the older copy
-        _log(f"WARNING could not copy the ChatGPT sign-in ({account}) into the database: {type(exc).__name__}: {exc}")
+        _log(f"WARNING could not copy the ChatGPT sign-in ({account}) into the database: {type(exc).__name__}")
         return False
 
 
@@ -395,6 +399,53 @@ def describe(record: dict | None) -> dict:
 _LOCKS: dict[str, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
 _AUTHENTICATORS: dict[str, object] = {}
+_PENDING_AUTH_WRITES: dict[str, dict] = {}
+_AUTH_WRITE_ERRORS: dict[str, str] = {}
+
+
+def _record_revision(record: dict | None) -> int:
+    revision = (record or {}).get("_woow_updated_at_ns", 0)
+    return revision if isinstance(revision, int) and not isinstance(revision, bool) else 0
+
+
+def _persist_auth_record(path: str, record: dict) -> bool:
+    """Attempt both copies independently; keep an unsaved rotation available for retry.
+
+    The revision lets restore choose a newer DB copy over an old file after ENOSPC,
+    or a newer file over an old DB copy after a database outage. Legacy ties keep
+    the historical file-first behavior. The caller holds this account's lock.
+    """
+    path = os.path.abspath(path)
+    _PENDING_AUTH_WRITES[path] = record
+    file_ok = False
+    try:
+        _write_json(path, record)
+        file_ok = True
+    except OSError as exc:
+        _log(f"ERROR ChatGPT sign-in file write failed: {type(exc).__name__}")
+    account = _account_for_path(path)
+    needs_db = bool(account and _has_tokens(record) and db_available())
+    db_ok = _db_save_logged(account, record) if needs_db else False
+    if file_ok:
+        _PENDING_AUTH_WRITES.pop(path, None)
+    if not file_ok:
+        _AUTH_WRITE_ERRORS[path] = "token_file_write_failed"
+    elif needs_db and not db_ok:
+        _AUTH_WRITE_ERRORS[path] = "token_database_write_failed"
+    else:
+        _AUTH_WRITE_ERRORS.pop(path, None)
+    if not file_ok and not db_ok:
+        raise OSError("ChatGPT sign-in could not be saved; retry after storage recovery")
+    return db_ok if needs_db else file_ok
+
+
+def _new_auth_record(path: str, data: dict) -> dict:
+    record = dict(data)
+    record["_woow_updated_at_ns"] = max(
+        time.time_ns(), _record_revision(_read_json(path)) + 1,
+        _record_revision(_PENDING_AUTH_WRITES.get(os.path.abspath(path))) + 1,
+    )
+    return record
 
 
 def _lock_for(path: str) -> threading.RLock:
@@ -448,22 +499,30 @@ def _patch_authenticator(module) -> None:
         return 0.0
 
     def _write_auth_file(self, data):
-        record = dict(data)
-        try:
-            _write_json(self.auth_file, record)
-        except OSError as exc:
-            _log(f"ERROR could not write {self.auth_file}: {exc}")
-            return
-        account = _account_for_path(self.auth_file)
-        if account and _has_tokens(record):
-            _db_save_logged(account, record)
+        with _lock_for(self.auth_file):
+            try:
+                _persist_auth_record(self.auth_file, _new_auth_record(self.auth_file, data))
+            except OSError:
+                raise error_cls(message="ChatGPT sign-in storage failed; retry after storage recovery", status_code=503) from None
+
+    original_read_auth_file = cls._read_auth_file
+
+    def _read_auth_file(self):
+        return _PENDING_AUTH_WRITES.get(os.path.abspath(self.auth_file)) or original_read_auth_file(self)
 
     original_get_access_token = cls.get_access_token
 
     def get_access_token(self):
         with _lock_for(self.auth_file):
+            pending = _PENDING_AUTH_WRITES.get(os.path.abspath(self.auth_file))
+            if pending:
+                try:
+                    _persist_auth_record(self.auth_file, pending)
+                except OSError:
+                    raise error_cls(message="ChatGPT sign-in storage failed; retry after storage recovery", status_code=503) from None
             return original_get_access_token(self)
 
+    cls._read_auth_file = _read_auth_file
     cls._login_device_code = _login_device_code
     cls._get_device_code_cooldown_remaining = _get_device_code_cooldown_remaining
     cls._write_auth_file = _write_auth_file
@@ -652,7 +711,7 @@ def remote_models(account: str = DEFAULT_ACCOUNT) -> list[dict]:
 
 
 def register_model_costs(models: list[dict]) -> list[str]:
-    """Teach LiteLLM the models it does not know yet (its bundled model map lags behind
+    """Teach LiteLLM unknown models and repair Router-created sparse entries (the map lags behind
     ChatGPT): mode=responses, so /chat/completions is bridged to the Codex Responses API instead
     of being sent to /codex/chat/completions (Cloudflare 403)."""
     import litellm
@@ -660,7 +719,11 @@ def register_model_costs(models: list[dict]) -> list[str]:
     new = {}
     for m in models:
         key = m["model"]
-        if key in litellm.model_cost:
+        existing = litellm.model_cost.get(key) or {}
+        # Router can register a responses-only entry before the delayed catalog sync.
+        # Presence alone does not mean LiteLLM knows its context/capabilities. Leave
+        # entries with an explicit context (including zero) entirely unchanged.
+        if existing.get("max_input_tokens") is not None:
             continue
         ctx = m.get("context_window") if isinstance(m.get("context_window"), int) else 272000
         new[key] = {
@@ -677,6 +740,12 @@ def register_model_costs(models: list[dict]) -> list[str]:
             "supports_reasoning": True,
             "supports_vision": True,
         }
+        # Missing/None is unknown; False, zero, empty lists and custom prices are
+        # intentional overrides. register_model merges this delta into the entry.
+        new[key] = {field: value for field, value in new[key].items()
+                    if existing.get(field) is None}
+        if not new[key]:
+            del new[key]
     if new:
         litellm.register_model(new)
     return sorted(new)
@@ -701,20 +770,44 @@ def _pending_view(pending: dict | None) -> dict | None:
 
 
 def sign_in_state(account: str = DEFAULT_ACCOUNT) -> dict:
-    """Who is signed in on this account, whether the copy is persisted, any pending sign-in."""
+    """Who is signed in; serialize status healing with refresh and disconnect."""
+    with _lock_for(auth_path(account)):
+        return _sign_in_state_locked(account)
+
+
+def _sign_in_state_locked(account: str) -> dict:
     record = account_record(account)
     out = {"account": account, **describe(record)}
     out["storage"] = "database" if db_available() else "file"
     if _has_tokens(record):
         try:
             stored = db_load(account)
-            if not stored or stored.get("refresh_token") != record.get("refresh_token"):
-                out["persisted"] = _db_save_logged(account, record)  # heal a failed write-through (the file is newest)
+            path = os.path.abspath(auth_path(account))
+            if _has_tokens(stored) and _record_revision(stored) > _record_revision(record):
+                # A refresh may have saved only its DB copy before the process died.
+                # Status must never "heal" that newer copy back to the stale file.
+                _PENDING_AUTH_WRITES[path] = stored
+                try:
+                    _write_json(path, stored)
+                except OSError:
+                    _AUTH_WRITE_ERRORS[path] = "token_file_write_failed"
+                else:
+                    _PENDING_AUTH_WRITES.pop(path, None)
+                    _AUTH_WRITE_ERRORS.pop(path, None)
+                out.update(describe(stored))
+                out["persisted"] = True
+            elif not stored or stored.get("refresh_token") != record.get("refresh_token"):
+                out["persisted"] = _db_save_logged(account, record)
             else:
                 out["persisted"] = True
+            if out["persisted"] and _AUTH_WRITE_ERRORS.get(path) == "token_database_write_failed":
+                _AUTH_WRITE_ERRORS.pop(path, None)
         except Exception as exc:  # noqa: BLE001
             out["persisted"] = False
             out["persist_error"] = type(exc).__name__
+    write_error = _AUTH_WRITE_ERRORS.get(os.path.abspath(auth_path(account)))
+    if write_error:
+        out["persist_error"] = write_error
     pending = _read_json(_pending_path(account))
     if pending and time.time() >= float(pending.get("expires_at", 0)):
         _remove(_pending_path(account))
@@ -830,10 +923,12 @@ def _connected_result(account: str, t: dict) -> dict:
         return {"ok": False, "account": account, "state": "error", "error": "duplicate_account",
                 "duplicate_of": other, "email": describe(record).get("email")}
     with _lock_for(auth_path(account)):
-        _write_json(auth_path(account), record)
+        try:
+            persisted = _persist_auth_record(auth_path(account), _new_auth_record(auth_path(account), record))
+        except OSError:
+            return {"ok": False, "account": account, "state": "error", "error": "token_storage_failed"}
     _remove(_pending_path(account))
     _remove(_browser_pending_path(account))
-    persisted = _db_save_logged(account, record)
     return {"ok": True, "state": "connected", "account": account, **describe(record), "persisted": persisted}
 
 
@@ -919,37 +1014,64 @@ def browser_finish(text: str, account: str = DEFAULT_ACCOUNT) -> dict:
 
 
 def disconnect(account: str = DEFAULT_ACCOUNT) -> dict:
-    """Forget this account's sign-in on this LiteLLM (OpenAI's grant itself is not revoked)."""
-    _remove(_pending_path(account))
-    _remove(_browser_pending_path(account))
-    with _lock_for(auth_path(account)):
-        _remove(auth_path(account))
-    try:
-        db_delete(account)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "account": account, "state": "error", "error": "db_delete_failed", "detail": type(exc).__name__}
+    """Keep the newest durable sign-in if deleting either store fails."""
+    path = auth_path(account)
+    cache_key = os.path.abspath(path)
+
+    def remove_files():
+        _remove(_pending_path(account))
+        _remove(_browser_pending_path(account))
+        _remove(path)
+
+    with _lock_for(path):
+        phase = "db_delete_failed"
+        try:
+            if db_available():
+                record, saved = account_record(account), db_load(account)
+                latest = saved if _has_tokens(saved) and (
+                    not _has_tokens(record) or _record_revision(saved) > _record_revision(record)
+                ) else record
+                # Before unlinking the file, make its newer rotation durable in DB.
+                # This is outside the deletion transaction: rollback must retain the
+                # NEW token even when DB commit fails after local unlink succeeded.
+                if _has_tokens(latest):
+                    if latest != saved:
+                        db_save(account, latest)
+                    _PENDING_AUTH_WRITES[cache_key] = latest
+                with _connect() as conn, conn.transaction():
+                    db_delete(account, conn)
+                    phase = "token_file_delete_failed"
+                    remove_files()
+                    phase = "db_delete_failed"  # transaction commit may still fail
+            else:
+                phase = "token_file_delete_failed"
+                remove_files()
+        except Exception as exc:  # noqa: BLE001 — rollback occurs before reporting failure
+            return {"ok": False, "account": account, "state": "error", "error": phase, "detail": type(exc).__name__}
+        _PENDING_AUTH_WRITES.pop(cache_key, None)
+        _AUTH_WRITE_ERRORS.pop(cache_key, None)
     return {"ok": True, "account": account, "state": "disconnected", "connected": False}
 
 
 def restore() -> dict:
-    """start-litellm.sh, before the proxy starts. A file already in the pod's tmpfs (container
-    restart) is the newest copy — it goes to the database; otherwise the database copy is
-    loaded. Every account."""
+    """Restore the newest durable copy before the proxy starts; never roll back rotation."""
     kept, restored = [], []
-    for account in file_accounts():
-        record = account_record(account)
-        if _has_tokens(record):
-            _db_save_logged(account, record)
-            kept.append(account)
     try:
         stored = db_accounts()
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "state": "error", "error": "db_load_failed", "detail": type(exc).__name__, "kept": kept}
-    for account, record in stored.items():
-        if account in kept or not _has_tokens(record):
-            continue
-        _write_json(auth_path(account), record)
-        restored.append(account)
+    for account in sorted(set(file_accounts()) | set(stored)):
+        path = auth_path(account)
+        record = account_record(account)
+        saved = stored.get(account)
+        if _has_tokens(saved) and (not _has_tokens(record) or _record_revision(saved) > _record_revision(record)):
+            _write_json(path, saved)
+            _PENDING_AUTH_WRITES.pop(os.path.abspath(path), None)
+            _AUTH_WRITE_ERRORS.pop(os.path.abspath(path), None)
+            restored.append(account)
+        elif _has_tokens(record):
+            _db_save_logged(account, record)
+            kept.append(account)
     state = "restored" if restored else ("kept" if kept else "none")
     return {"ok": True, "state": state, "connected": bool(kept or restored), "kept": kept, "restored": restored}
 

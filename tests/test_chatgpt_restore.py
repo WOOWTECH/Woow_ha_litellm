@@ -145,8 +145,10 @@ def test_restore_db_read_failure_contract_and_local_tokens_unchanged(core, monke
         raise OSError("SYNTHETIC_PRIVATE_DB_DETAIL")
 
     monkeypatch.setattr(core, "db_accounts", unavailable)
+    # Canonical 0.3.2 (charts 427e063) reads the database before touching any account, so a read
+    # failure returns before anything is classified as kept; the local file stays untouched.
     assert core.restore() == {
-        "ok": False, "state": "error", "error": "db_load_failed", "detail": "OSError", "kept": ["a1"],
+        "ok": False, "state": "error", "error": "db_load_failed", "detail": "OSError", "kept": [],
     }
     assert Path(core.auth_path("a1")).read_bytes() == original
 
