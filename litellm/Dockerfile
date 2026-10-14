@@ -113,7 +113,7 @@ RUN python -I /usr/share/woow-litellm/patches/apply_restore_fix.py
 # Fixed failure thresholds and redacted security warnings on the pinned login module.
 RUN python -I /usr/share/woow-litellm/patches/apply_login_throttle.py
 
-ARG BUILD_VERSION=0.1.5
+ARG BUILD_VERSION=0.1.6
 ARG BUILD_REF=unknown
 ARG BUILD_ARCH=amd64
 # CI supplies the actual UTC build time; do not inherit the base image creation date.
