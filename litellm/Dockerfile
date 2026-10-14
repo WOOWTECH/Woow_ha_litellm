@@ -112,6 +112,8 @@ RUN python -I /usr/share/woow-litellm/patches/apply_security_headers.py
 RUN python -I /usr/share/woow-litellm/patches/apply_restore_fix.py
 # Fixed failure thresholds and redacted security warnings on the pinned login module.
 RUN python -I /usr/share/woow-litellm/patches/apply_login_throttle.py
+# M4 API error contracts (API-04/07/11/22); last, so both HA and PaaS chains give the same input.
+RUN python -I /usr/share/woow-litellm/patches/apply_api_errors.py
 
 ARG BUILD_VERSION=0.1.7
 ARG BUILD_REF=unknown
