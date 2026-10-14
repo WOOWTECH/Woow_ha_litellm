@@ -1,8 +1,9 @@
 """Woow client-safe provider errors and provider headers for pinned LiteLLM 1.104.0.
 
 Installed as ``litellm/litellm_core_utils/woow_provider_errors.py`` by
-``apply_upstream_guard.py``. Standard library only: it never imports LiteLLM, so the patched
-upstream modules can import it lazily from any layer, and lean tests load it by path.
+``apply_upstream_guard.py``. Standard library only at import time, so the patched upstream
+modules can import it lazily from any layer, and lean tests load it by path; the server-log
+redaction also runs LiteLLM's ``secret_redaction.redact_string`` when that module is loaded.
 
 OpenRouter error bodies carry the gateway's own OpenRouter account (``user_id``), the
 upstream provider's raw answer (``error.metadata.raw``), BYOK flags, flagged input and
@@ -10,7 +11,9 @@ provider headers. LiteLLM copies that text into the client error, the streaming 
 and the spend log, which internal users can read. Everything here rebuilds such a body as
 ``{"error":{"message":M,"code":C}}`` with a status-dependent ``M`` and replaces account,
 organisation, project, request, generation and key identifiers. The original text only goes
-to the server log (WARNING, already secret-redacted by LiteLLM).
+to the server log: one ERROR record per scrubbed error (ERROR so that ``LITELLM_LOG=ERROR``
+keeps it), secrets redacted first, at most 2000 characters; ``WOOW_PROVIDER_ERROR_LOG=off``
+drops that record. It never reaches the client, the spend log or response headers.
 
 An error is treated as OpenRouter's when the provider is ``openrouter`` or when its body has
 OpenRouter's shape: a top-level ``user_id`` next to an ``error`` object (``openai/`` routes
@@ -21,10 +24,12 @@ Every function is idempotent: a router or text-completion wrapper may scrub the 
 again without changing it.
 """
 import ast
+import contextvars
 import json
 import logging
 import os
 import re
+import sys
 from typing import Final
 from urllib.parse import urlsplit
 
@@ -46,7 +51,7 @@ _NESTED_FOR: Final = frozenset({400, 413, 422})
 _NESTED_LIMIT: Final = 300
 _REASONS_LIMIT: Final = 5
 _REASON_LIMIT: Final = 64
-_LOG_LIMIT: Final = 2000
+_LOG_LIMIT: Final = 2000  # characters of the redacted original kept in the server log
 _PROVIDER_ERROR_MARK: Final = "Provider returned error"
 _BODY_LIMIT: Final = 100_000  # longest body parsed as a Python literal (OpenAI SDK repr)
 _HEALTH_ERROR_LIMIT: Final = 500
@@ -64,6 +69,23 @@ _ID_RULES: Final = (
     (re.compile(r"\bsk-[A-Za-z0-9-]{8,}"), REDACTED),
     (re.compile(r"\b[0-9a-f]{32,}\b"), REDACTED),
 )
+
+# Credentials the server log must never hold, applied after LiteLLM's own redact_string (which lean
+# tests do not load): sk- keys, Bearer tokens, JWTs and api_key values.
+_SECRET_RULES: Final = (
+    (re.compile(r"\bBearer\s+[A-Za-z0-9\-._~+/]+=*", re.I), "Bearer " + REDACTED),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*"), REDACTED),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{8,}"), REDACTED),
+    (re.compile(r"""((?:x-)?api[_-]?key['"]?\s*[:=]\s*['"]?)[^\s,;&'"})\[\]{}>]+""", re.I), r"\g<1>" + REDACTED),
+)
+
+PROVIDER_ERROR_LOG_ENV: Final = "WOOW_PROVIDER_ERROR_LOG"
+_PROVIDER_ERROR_LOG_MODES: Final = ("raw", "off")
+# Text of the last record for the exception being mapped: exception_type() scrubs error_str, then
+# its OpenAI-compatible mapping scrubs the same exception's message again.
+_LOGGED: Final = contextvars.ContextVar("woow_provider_error_logged", default=None)
+# Body stream_error_parts() rebuilt (and logged the original of); mapping it again is not a new error.
+_EMITTED: Final = contextvars.ContextVar("woow_provider_error_emitted", default=None)
 
 PROVIDER_HEADERS_ENV: Final = "WOOW_PROVIDER_HEADERS"
 _PROVIDER_HEADER_PREFIX: Final = "llm_provider-"
@@ -201,8 +223,53 @@ def _rebuild(text: str, status: object, found: tuple[int, int, dict] | None) -> 
     return redact_ids(text[:start]) + rebuilt + redact_ids(text[end:])
 
 
+def provider_error_log_mode() -> str:
+    """``WOOW_PROVIDER_ERROR_LOG``: ``raw`` (default) or ``off``; anything else logs an error and uses raw."""
+    raw = os.environ.get(PROVIDER_ERROR_LOG_ENV)
+    if raw is None or raw.strip() == "":
+        return _PROVIDER_ERROR_LOG_MODES[0]
+    value = raw.strip().lower()
+    if value in _PROVIDER_ERROR_LOG_MODES:
+        return value
+    _LOG.error("Woow: invalid %s=%r; using %s", PROVIDER_ERROR_LOG_ENV, raw, _PROVIDER_ERROR_LOG_MODES[0])
+    return _PROVIDER_ERROR_LOG_MODES[0]
+
+
+def redact_secrets(text: str) -> str:
+    """``text`` without credentials: LiteLLM's secret redaction when loaded, then ``_SECRET_RULES``.
+
+    exception_mapping_utils imports ``secret_redaction`` at load time, so in the proxy it is
+    always there; looking it up in ``sys.modules`` never imports LiteLLM (lean tests).
+    """
+    litellm_redaction = sys.modules.get("litellm.litellm_core_utils.secret_redaction")
+    redact_string = getattr(litellm_redaction, "redact_string", None)
+    if callable(redact_string):
+        try:
+            text = redact_string(text)
+        except Exception:  # noqa: BLE001 - never let logging break error mapping; the local rules still apply
+            pass
+    for pattern, replacement in _SECRET_RULES:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def server_log_text(raw: str) -> str:
+    """What the server log keeps of an original provider error: secrets redacted, then truncated."""
+    return redact_secrets(raw)[:_LOG_LIMIT]
+
+
 def _log_scrubbed(provider: object, status: object, raw: str) -> None:
-    _LOG.warning("Woow upstream error scrubbed (provider=%s status=%s) raw=%s", provider, status, raw[:_LOG_LIMIT])
+    """One ERROR record holding the original text, so LITELLM_LOG=ERROR keeps it (server log only)."""
+    if provider_error_log_mode() == "off":
+        return
+    emitted = _EMITTED.get()
+    if emitted is not None and emitted in raw:
+        return  # a mid-stream error stream_error_parts() already logged, mapped again
+    text = server_log_text(raw)
+    if _LOGGED.get() == text:
+        return  # the same exception, mapped a second time
+    _LOGGED.set(text)
+    _LOG.error("Woow upstream error scrubbed (provider=%s status=%s) raw=%s", provider, status, text)
 
 
 def scrub_provider_error(provider: object, error_str: str, status: object = None) -> str:
@@ -211,8 +278,13 @@ def scrub_provider_error(provider: object, error_str: str, status: object = None
     ``error_str`` is LiteLLM's (already secret-redacted) provider error text. OpenRouter
     errors, and OpenRouter-shaped bodies on other providers (``openai/`` routes pointed at
     OpenRouter, JSON or the OpenAI SDK's Python repr), are rebuilt; the original goes to the
-    server log only.
+    server log only. Each call starts a new error for the one-record-per-error log rule.
     """
+    _LOGGED.set(None)
+    return _scrub(provider, error_str, status)
+
+
+def _scrub(provider: object, error_str: str, status: object) -> str:
     if not isinstance(error_str, str):
         return error_str
     found = _find_body(error_str)
@@ -236,9 +308,9 @@ def scrub_compatible_message(provider: object, message: object, exception: objec
     status = getattr(exception, "status_code", None)
     inline = _find_body(message)
     if inline is not None and (provider == "openrouter" or _openrouter_shaped(inline[2])):
-        return scrub_provider_error(provider, message, status)
+        return _scrub(provider, message, status)
     if provider == "openrouter":
-        return scrub_provider_error(provider, message, status)
+        return _scrub(provider, message, status)
     for full in (getattr(exception, "message", None), str(exception)):
         found = _find_body(full) if isinstance(full, str) else None
         if found is None or not _openrouter_shaped(found[2]):
@@ -255,8 +327,9 @@ def stream_error_parts(error_chunk: object) -> tuple[str, int]:
     """Message and HTTP status for an OpenRouter mid-stream ``{"error": {...}}`` chunk.
 
     Only ``message`` and ``code`` survive; ``metadata`` (raw provider text, provider headers)
-    and ``user_id`` are dropped. A non-numeric code (``"server_error"``) maps to 500 and
-    ``rate_limit*`` to 429 instead of crashing on ``int()``.
+    and ``user_id`` are dropped, and the original chunk goes to the server log only. A
+    non-numeric code (``"server_error"``) maps to 500 and ``rate_limit*`` to 429 instead of
+    crashing on ``int()``.
     """
     chunk = error_chunk if isinstance(error_chunk, dict) else {}
     message = chunk.get("message")
@@ -268,7 +341,12 @@ def stream_error_parts(error_chunk: object) -> tuple[str, int]:
         status = 429 if isinstance(code, str) and code.lower().startswith("rate_limit") else 500
     text = GENERIC_STREAM_MESSAGE if message is None or message == "" else str(message)
     body = {"error": {"message": redact_ids(text), "code": code}}
-    return json.dumps(body, separators=(",", ":"), ensure_ascii=False), status
+    rebuilt = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
+    if set(chunk) - {"message", "code"} or body["error"]["message"] != message:
+        _LOGGED.set(None)
+        _log_scrubbed("openrouter", status, json.dumps(chunk, ensure_ascii=False, default=str))
+        _EMITTED.set(rebuilt)
+    return rebuilt, status
 
 
 def client_safe_stream_message(message: object) -> str:

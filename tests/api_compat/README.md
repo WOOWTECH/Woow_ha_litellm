@@ -71,6 +71,12 @@ flagged input) and probe headers. It covers:
   `(status, type, code, param)` envelope equals a table recorded on the replayed HA 0.1.8
   chain; only messages change. The spend-log failure row keeps its error code, class and the
   upstream request id, and the raw text appears exactly once in the server log.
+- The server-log record of the original text: with the LiteLLM logger at ERROR (what
+  `LITELLM_LOG=ERROR` leaves), exactly one ERROR record per provider error on every route,
+  `openai/` deployments and mid-stream chunks included; credentials (`sk-`, Bearer, JWT,
+  `api_key=`) redacted and the text cut to 2000 characters, while the body, headers and spend
+  log stay scrubbed. `WOOW_PROVIDER_ERROR_LOG=off` writes no record; an invalid value is
+  reported at ERROR and the raw record is kept.
 - The same P0 checks for `openai/` deployments pointed at OpenRouter (chat, chat streaming,
   `/v1/completions` with and without streaming, embeddings), where the OpenAI SDK reports the
   body as a Python repr or only the inner message: same envelope table, the 401/402/403/429

@@ -264,7 +264,7 @@ def test_user_env_var_reaches_litellm_only_and_is_masked(box):
 GUARD_SWITCHES = {
     "WOOW_PROVIDER_HEADERS": "all", "WOOW_TOKEN_LIMIT_VALIDATION": "off", "WOOW_BUDGET_ADMISSION": "resize",
     "WOOW_BUDGET_UNPRICED": "block_budgeted_keys", "WOOW_BUDGET_REASONING_RESERVE_TOKENS": "4096",
-    "WOOW_BUDGET_MIN_INPUT_TOKENS": "0",
+    "WOOW_BUDGET_MIN_INPUT_TOKENS": "0", "WOOW_PROVIDER_ERROR_LOG": "off",
 }
 
 
@@ -290,6 +290,7 @@ def test_upstream_guard_switches_are_the_only_settable_woow_env(box):
         ("WOOW_BUDGET_ADMISSION", "lenient"), ("WOOW_BUDGET_UNPRICED", "block"),
         ("WOOW_BUDGET_REASONING_RESERVE_TOKENS", "-1"), ("WOOW_BUDGET_MIN_INPUT_TOKENS", "lots"),
         ("WOOW_BUDGET_REASONING_RESERVE_TOKENS", "10000000"),
+        ("WOOW_PROVIDER_ERROR_LOG", "verbose"), ("WOOW_PROVIDER_ERROR_LOG", "Raw"),
     ],
 )
 def test_upstream_guard_switch_values_checked(box, key, value):

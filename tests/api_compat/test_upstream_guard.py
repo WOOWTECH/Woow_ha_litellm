@@ -253,7 +253,8 @@ def gateway(monkeypatch):
     monkeypatch.setattr(server.proxy_logging_obj.db_spend_update_writer, 'update_database', update_database)
     monkeypatch.setattr(litellm, 'callbacks', [_ProxyDBLogger()])
     for env in ('WOOW_PROVIDER_HEADERS', 'WOOW_TOKEN_LIMIT_VALIDATION', 'WOOW_BUDGET_ADMISSION',
-                'WOOW_BUDGET_UNPRICED', 'WOOW_BUDGET_REASONING_RESERVE_TOKENS', 'WOOW_BUDGET_MIN_INPUT_TOKENS'):
+                'WOOW_BUDGET_UNPRICED', 'WOOW_BUDGET_REASONING_RESERVE_TOKENS', 'WOOW_BUDGET_MIN_INPUT_TOKENS',
+                'WOOW_PROVIDER_ERROR_LOG'):
         monkeypatch.delenv(env, raising=False)
     yield Gateway(server.app, upstream, spend)
     server.spend_counter_cache.in_memory_cache.flush_cache()
@@ -528,6 +529,97 @@ def test_openai_compatible_spend_log_scrubbed(gateway, route):
                                            start_time=r['start_time'], end_time=r['end_time'], llm_router=None),
                        default=str) for r in gateway.spend]
     assert rows and not [s for s in ('WoowFakeProvider', FLAGGED, USER_ID, 'flagged_input') for row in rows if s in row]
+
+
+@pytest.fixture
+def error_log(litellm_log):
+    """The LiteLLM logger as LITELLM_LOG=ERROR leaves it (PaaS): WARNING records are dropped."""
+    logger = logging.getLogger('LiteLLM')
+    level = logger.level
+    logger.setLevel(logging.ERROR)
+    yield litellm_log
+    logger.setLevel(level)
+
+
+RAW_PREFIX = 'Woow upstream error scrubbed'
+LOG_SECRETS = ('Bearer FAKEbearerTOKEN0123456789', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJGQUtFIn0.FAKEsignature012',
+               'api_key=FAKEapiKEYvalue0123', FAKE_KEY)
+SECRET_VALUES = ('FAKEbearerTOKEN', 'FAKEsignature012', 'FAKEapiKEYvalue0123', '0123456789abcdef' * 4)
+# The 429 body of or429byok plus credentials and padding inside metadata.raw (server log: redacted, <= 2000);
+# user_id first so that it stays inside the 2000 kept characters.
+SECRET_429 = (429, {'user_id': USER_ID, 'error': {'message': 'Provider returned error', 'code': 429, 'metadata': {
+    'provider_name': 'WoowFakeProvider', 'is_byok': True,
+    'raw': json.dumps({'error': {'message': f'Rate limit reached in organization {ORG_ID}. request id {UPSTREAM_REQ} '
+                                            + ' '.join(LOG_SECRETS) + ' ' + 'p' * 3000}})}}})
+RAW_LOG_CASES = [('chat', 'or429byok'), ('messages-stream', 'or429byok'), ('completions', 'compat-or429byok'),
+                 ('embeddings', 'compat-or429byok'), ('chat-stream', 'midstream')]
+
+
+def raw_records(log):
+    return [r for r in log.records if r.getMessage().startswith(RAW_PREFIX)]
+
+
+def spend_rows(gateway):
+    from litellm.proxy.spend_tracking.spend_tracking_utils import get_logging_payload
+    return [json.dumps(get_logging_payload(kwargs=r['kwargs'], response_obj=r['completion_response'],
+                                           start_time=r['start_time'], end_time=r['end_time'], llm_router=None),
+                       default=str) + str(r['completion_response']) for r in gateway.spend]
+
+
+@pytest.mark.parametrize('route,scenario', RAW_LOG_CASES)
+def test_raw_error_kept_in_server_log_at_error_only(gateway, monkeypatch, error_log, route, scenario):
+    """LITELLM_LOG=ERROR keeps one redacted, truncated record of the original; client, spend log and headers stay scrubbed."""
+    monkeypatch.setitem(ERRORS, 'or429byok', SECRET_429)
+    path, body = ROUTES[route]
+    result = gateway.request('POST', path, body(scenario))
+    assert leaks(result) == [], result.text[:600]
+    everything = result.text + '\n'.join(f'{k}: {v}' for k, v in result.headers.items())
+    assert not [v for v in SECRET_VALUES if v in everything] and 'Rate limit reached' not in everything
+    records = raw_records(error_log)
+    assert len(records) == 1 and records[0].levelno == logging.ERROR
+    logged = records[0].getMessage()
+    raw = logged.split(' raw=', 1)[1]
+    assert USER_ID in logged and 'WoowFakeProvider' in logged and len(raw) <= 2000
+    if scenario != 'midstream':
+        assert ORG_ID in logged and 'Rate limit reached' in logged and 'status=429' in logged
+        assert len(raw) == 2000  # the 3000-character padding is cut
+    assert not [v for v in SECRET_VALUES if v in logged]
+    rows = spend_rows(gateway)
+    assert rows and not [s for s in (USER_ID, ORG_ID, 'WoowFakeProvider', 'is_byok', 'Rate limit reached', *SECRET_VALUES)
+                         for row in rows if s in row]
+
+
+ONE_RECORD_CASES = ([(r, 'or403mod') for r in ROUTES] + [(r, 'compat-or403mod') for r in COMPAT_ROUTES]
+                    + [(r, s) for r in ('chat-stream', 'messages-stream') for s in MIDSTREAM])
+
+
+@pytest.mark.parametrize('route,scenario', ONE_RECORD_CASES)
+def test_one_raw_record_per_provider_error(gateway, error_log, route, scenario):
+    """openai/ routes map the same exception twice (error_str, then the OpenAI-compatible message)."""
+    path, body = ROUTES[route]
+    gateway.request('POST', path, body(scenario))
+    records = raw_records(error_log)
+    assert len(records) == 1, [r.getMessage()[:200] for r in records]
+    assert records[0].levelno == logging.ERROR and USER_ID in records[0].getMessage()
+
+
+@pytest.mark.parametrize('route,scenario', RAW_LOG_CASES)
+def test_provider_error_log_off_writes_no_raw_record(gateway, monkeypatch, litellm_log, route, scenario):
+    monkeypatch.setenv('WOOW_PROVIDER_ERROR_LOG', 'off')
+    path, body = ROUTES[route]
+    result = gateway.request('POST', path, body(scenario))
+    assert leaks(result) == []
+    assert not raw_records(litellm_log)
+    assert not [r for r in litellm_log.records if USER_ID in r.getMessage()]
+
+
+def test_invalid_provider_error_log_value_is_reported_and_raw_kept(gateway, monkeypatch, error_log):
+    monkeypatch.setenv('WOOW_PROVIDER_ERROR_LOG', 'verbose')
+    result = gateway.request('POST', '/v1/chat/completions', {'model': 'or403mod', 'messages': M})
+    assert result.status_code == 403 and leaks(result) == []
+    invalid = [r for r in error_log.records if r.getMessage().startswith("Woow: invalid WOOW_PROVIDER_ERROR_LOG='verbose'")]
+    assert invalid and all(r.levelno == logging.ERROR for r in invalid)
+    assert len(raw_records(error_log)) == 1
 
 
 def test_other_provider_error_mentioning_user_id_is_untouched(gateway, monkeypatch, litellm_log):

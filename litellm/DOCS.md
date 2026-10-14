@@ -143,7 +143,8 @@ OpenAI 相容端點在 `/v1`。**請在 LiteLLM 為每個用途建立虛擬 key*
 
 `env_vars` 不可覆寫 add-on 的金鑰、資料庫、設定檔／雲端設定桶、TLS 路徑、登入節流、worker 與監聽埠。
 HA 設定頁的格式驗證不等於啟動驗證；保留字、cron 語意與無法原樣傳遞的值會在啟動時被拒絕，訊息會指出欄位。
-`WOOW_` 開頭的名稱也是保留字，只有上游防護的退回開關可以設定，而且值會檢查：`WOOW_PROVIDER_HEADERS`（`allowlist`／`all`）、`WOOW_TOKEN_LIMIT_VALIDATION`（`enforce`／`warn`／`off`）、`WOOW_BUDGET_ADMISSION`（`strict`／`full`／`resize`）、`WOOW_BUDGET_UNPRICED`（`allow`／`block_budgeted_keys`）、`WOOW_BUDGET_REASONING_RESERVE_TOKENS` 與 `WOOW_BUDGET_MIN_INPUT_TOKENS`（0 到 9999999 的整數）。
+`WOOW_` 開頭的名稱也是保留字，只有上游防護的退回開關可以設定，而且值會檢查：`WOOW_PROVIDER_HEADERS`（`allowlist`／`all`）、`WOOW_PROVIDER_ERROR_LOG`（`raw`／`off`）、`WOOW_TOKEN_LIMIT_VALIDATION`（`enforce`／`warn`／`off`）、`WOOW_BUDGET_ADMISSION`（`strict`／`full`／`resize`）、`WOOW_BUDGET_UNPRICED`（`allow`／`block_budgeted_keys`）、`WOOW_BUDGET_REASONING_RESERVE_TOKENS` 與 `WOOW_BUDGET_MIN_INPUT_TOKENS`（0 到 9999999 的整數）。
+OpenRouter 錯誤回給呼叫端前會清洗；上游原文只寫進 add-on 記錄，每個錯誤一筆 ERROR（`log_level: error` 也看得到），先遮蔽金鑰（`sk-…`、Bearer、JWT、`api_key=` 等）再截到 2000 字，不會進回應、用量紀錄或回應標頭；`WOOW_PROVIDER_ERROR_LOG=off` 可不記。
 PostgreSQL 使用 UTC 時間且不記錄例行 checkpoint；LiteLLM 的清理排程依 HA 時區。
 未帶 API key 的請求可能留下 LiteLLM 上游的 ERROR／traceback，但 HTTP 回應仍是 401。
 

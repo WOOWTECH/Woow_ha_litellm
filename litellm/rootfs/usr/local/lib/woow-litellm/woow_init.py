@@ -88,6 +88,7 @@ RESERVED_PREFIXES = (
 # None for a non-negative token count.
 GUARD_ENV = {
     "WOOW_PROVIDER_HEADERS": ("allowlist", "all"),
+    "WOOW_PROVIDER_ERROR_LOG": ("raw", "off"),
     "WOOW_TOKEN_LIMIT_VALIDATION": ("enforce", "warn", "off"),
     "WOOW_BUDGET_ADMISSION": ("strict", "full", "resize"),
     "WOOW_BUDGET_UNPRICED": ("allow", "block_budgeted_keys"),
