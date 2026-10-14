@@ -10,7 +10,7 @@ IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$IMG")
 printf 'API contracts image: %s\n' "$IMAGE_ID"
 mkdir -p "$API_TMP/harness/wheels"
 cp "$REPO/tests/api_contract_harness/"*.py "$REPO/tests/api_contract_harness/"*.json "$API_TMP/harness/"
-cp "$REPO/litellm/patches/apply_api_compat.py" "$API_TMP/harness/"
+cp "$REPO/litellm/patches/apply_api_compat.py" "$REPO/litellm/patches/apply_routes_auth.py" "$API_TMP/harness/"
 python3 -m venv "$API_TMP/downloader"
 "$API_TMP/downloader/bin/python" -m pip download --disable-pip-version-check \
   --index-url https://pypi.org/simple --only-binary=:all: --no-deps --require-hashes \

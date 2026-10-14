@@ -105,13 +105,15 @@ RUN python -I /usr/share/woow-litellm/patches/apply_responses_fix.py \
  && python -I /usr/share/woow-litellm/patches/apply_subscription_policy.py
 # API01/API07/API23: source-hash-guarded, independent of provider and plugin patches.
 RUN python -I /usr/share/woow-litellm/patches/apply_api_compat.py
+# Require standard auth for route inventory; health endpoints remain public.
+RUN python -I /usr/share/woow-litellm/patches/apply_routes_auth.py
 RUN python -I /usr/share/woow-litellm/patches/apply_security_headers.py
 # Addon-local restore error contract; canonical plugin copy and lock stay unchanged.
 RUN python -I /usr/share/woow-litellm/patches/apply_restore_fix.py
 # Fixed failure thresholds and redacted security warnings on the pinned login module.
 RUN python -I /usr/share/woow-litellm/patches/apply_login_throttle.py
 
-ARG BUILD_VERSION=0.1.5
+ARG BUILD_VERSION=0.1.6
 ARG BUILD_REF=unknown
 ARG BUILD_ARCH=amd64
 # CI supplies the actual UTC build time; do not inherit the base image creation date.
