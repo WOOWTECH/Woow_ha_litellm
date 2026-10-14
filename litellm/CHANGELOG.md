@@ -23,7 +23,9 @@
 - OpenRouter 路由的 `reasoning_effort` 對所有模型都會轉送；之前不在 LiteLLM 費用表裡的新模型，在 `drop_params: true` 下會被靜默丟掉。
 - 有預算上限的金鑰使用未設定單價的模型時，伺服器記錄 `event=unpriced_budgeted_request` 警告（預設照常放行）。
 
-### 退回開關（在附加元件設定的 `env_vars` 設定，不需重建映像）
+### 退回開關（在附加元件設定的 `env_vars` 設定，不需重建映像；PaaS 用 chart 的 `extraEnv`）
+
+`WOOW_` 開頭的其他名稱仍是保留字；下列開關的值不合法時，附加元件會拒絕啟動並指出欄位。
 
 - `WOOW_PROVIDER_HEADERS=all`：恢復轉送所有供應商回應標頭。
 - `WOOW_TOKEN_LIMIT_VALIDATION=enforce`（預設）｜`warn`（照舊轉送並記警告）｜`off`（與前一版相同）。
