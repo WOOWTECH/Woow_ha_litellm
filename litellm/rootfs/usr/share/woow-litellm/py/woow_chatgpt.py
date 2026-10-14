@@ -710,6 +710,26 @@ def remote_models(account: str = DEFAULT_ACCOUNT) -> list[dict]:
     return out
 
 
+_BUNDLED_CONTEXT: dict | None = None
+
+
+def _bundled_context(key: str):
+    """max_input_tokens of `key` in the cost map shipped inside the installed LiteLLM package
+    (both PaaS and HA run with LITELLM_LOCAL_MODEL_COST_MAP=True), or None."""
+    global _BUNDLED_CONTEXT
+    if _BUNDLED_CONTEXT is None:
+        try:
+            import importlib.resources
+
+            raw = importlib.resources.files("litellm").joinpath(
+                "model_prices_and_context_window_backup.json").read_text(encoding="utf-8")
+            _BUNDLED_CONTEXT = {k: v.get("max_input_tokens") for k, v in json.loads(raw).items()
+                                if isinstance(v, dict)}
+        except Exception:  # noqa: BLE001 — without the bundled map nothing is treated as bundled
+            _BUNDLED_CONTEXT = {}
+    return _BUNDLED_CONTEXT.get(key)
+
+
 def register_model_costs(models: list[dict]) -> list[str]:
     """Teach LiteLLM unknown models and repair Router-created sparse entries (the map lags behind
     ChatGPT): mode=responses, so /chat/completions is bridged to the Codex Responses API instead
@@ -721,9 +741,17 @@ def register_model_costs(models: list[dict]) -> list[str]:
         key = m["model"]
         existing = litellm.model_cost.get(key) or {}
         # Router can register a responses-only entry before the delayed catalog sync.
-        # Presence alone does not mean LiteLLM knows its context/capabilities. Leave
-        # entries with an explicit context (including zero) entirely unchanged.
+        # Presence alone does not mean LiteLLM knows its context/capabilities.
         if existing.get("max_input_tokens") is not None:
+            # The account's catalog is the authority for a ChatGPT subscription's context
+            # window; LiteLLM's bundled map lists the API window (e.g. 1050000 vs 272000).
+            # Replace only the untouched bundled value. A value a deployment registered
+            # (Router) or anyone else set differs from the bundled one and stays as it is.
+            ctx = m.get("context_window")
+            bundled = _bundled_context(key)
+            if (isinstance(ctx, int) and not isinstance(ctx, bool) and ctx > 0
+                    and bundled is not None and existing["max_input_tokens"] == bundled != ctx):
+                new[key] = {"max_input_tokens": ctx}
             continue
         ctx = m.get("context_window") if isinstance(m.get("context_window"), int) else 272000
         new[key] = {

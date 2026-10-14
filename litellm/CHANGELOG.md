@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.8
+
+2026-10-14
+
+### 修正
+
+- Woow 外掛同步到 PaaS chart 0.3.3：ChatGPT 模型的上下文長度改以帳號清單為準（例：`chatgpt/gpt-5.5` 由 1050000 改為 272000），手動設定的值不受影響。
+- 請求帶 `mock_response`／`mock_tool_calls` 時回 400，不再悄悄移除後照樣送到模型供應商（金鑰或團隊 metadata 設 `allow_client_mock_response: true` 時照舊允許）。
+- 在請求驗證階段就被拒絕的請求（缺必要參數、JSON 無法解析、mock 參數、tool_call_id 對不上）不再寫入用量紀錄。
+- 對話串流在結束片段之後不再多送一個空的 choices 片段；用量照常計算與回傳。
+- `role: tool` 訊息的 `tool_call_id` 必須對應前面 assistant 訊息的 `tool_calls`，否則回 400。
+- OpenAI 相容路由的 404／405／422／500 錯誤一律回 `{"error": {...}}`，`code` 等於 HTTP 狀態碼；`/v1/completions` 缺 `prompt` 回 400；未處理的內部錯誤只回通用訊息，不外露內部內容。管理 API、後台、`/v1/messages` 與 Woow 外掛頁面的錯誤格式不變。
+
 ## 0.1.7
 
 2026-10-14

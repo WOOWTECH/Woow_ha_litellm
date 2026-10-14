@@ -5,13 +5,13 @@
     "repository": "woow-paas/woow-paas-charts",
     "url": "https://git-prod.woowtech.io/woow-paas/woow-paas-charts",
     "path": "charts/litellm/files/",
-    "commit": "82388ef5c70c294fa7d089053c84011e86150c59",
-    "branch": "main",
-    "chart_version": "0.3.2",
+    "commit": "6a6d1f916a13bd3d4b71252294684fe9137a2224",
+    "branch": "origin/HEAD",
+    "chart_version": "0.3.3",
     "merged_to_main": true
   },
   "destination": "litellm/rootfs/usr/share/woow-litellm/py/",
-  "synced_at": "2026-10-14T08:27:36Z",
+  "synced_at": "2026-10-14T10:22:41Z",
   "files": {
     "sitecustomize.py": {
       "git_blob": "f5407aacd4ed0d0202da7d6c578ef6a267b8a45b",
@@ -19,9 +19,9 @@
       "size": 662
     },
     "woow_chatgpt.py": {
-      "git_blob": "0abcbf2512fd0b87166d6070e153893c13489f54",
-      "sha256": "559c19946ec03206578f27d7aebbf2ab32c2451dab3c409de8f69b125eb88eb3",
-      "size": 52089
+      "git_blob": "955539acab2a2f8057a6bbbaa15a9d533159d721",
+      "sha256": "388f5d8618790eff55f5ab5aa32b84b02594445616491e6b2c00ddd0ca1e1af6",
+      "size": 53518
     },
     "woow_chatgpt_plugin.py": {
       "git_blob": "b18133711745083b7036c16d889bfdfad9976c8a",

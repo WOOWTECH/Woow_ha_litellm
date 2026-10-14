@@ -35,12 +35,18 @@ def verify_patched_source(root, patches):
             raise RuntimeError('Built image API patch mismatch: ' + name)
 
 
-def final_api_patches(api_patch, routes_patch):
+def final_api_patches(api_patch, routes_patch, errors_patch):
     patches = dict(api_patch.PATCHES)
     before, after, edits = patches[routes_patch.TARGET]
     if after != routes_patch.EXPECTED:
         raise RuntimeError('Routes auth patch must follow the exact API patch output')
     patches[routes_patch.TARGET] = (before, routes_patch.RESULT, edits)
+    # The API errors patch runs last; on shared files it must start from the exact output above.
+    for name, (errors_before, errors_after, errors_edits) in errors_patch.PATCHES.items():
+        if name in patches and patches[name][1] != errors_before:
+            raise RuntimeError('API errors patch must follow the exact API patch output: ' + name)
+        patches[name] = (patches[name][0] if name in patches else errors_before, errors_after, errors_edits)
+    patches[errors_patch.HELPER] = (None, errors_patch.HELPER_SHA256, ())
     return patches
 
 
@@ -90,9 +96,13 @@ def main():
         routes_spec = importlib.util.spec_from_file_location('routes_patch', HERE / 'apply_routes_auth.py')
         routes_patch = importlib.util.module_from_spec(routes_spec)
         routes_spec.loader.exec_module(routes_patch)
-        verify_patched_source(root, final_api_patches(patch, routes_patch))
+        errors_spec = importlib.util.spec_from_file_location('errors_patch', HERE / 'apply_api_errors.py')
+        errors_patch = importlib.util.module_from_spec(errors_spec)
+        errors_spec.loader.exec_module(errors_patch)
+        final_patches = final_api_patches(patch, routes_patch, errors_patch)
+        verify_patched_source(root, final_patches)
         print(json.dumps({'litellm_version': importlib.metadata.version('litellm'),
-                          'source': str(root), 'verified_patch_files': len(patch.PATCHES),
+                          'source': str(root), 'verified_patch_files': len(final_patches),
                           'harness': {r['name']: r['version'] for r in lock}}, sort_keys=True), flush=True)
         sys.addaudithook(offline_only)
         import pytest

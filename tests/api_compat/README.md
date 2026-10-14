@@ -39,6 +39,23 @@ Socket connections are forbidden during every contract test. All keys, identifie
 provider responses and users are synthetic; no operator credential file is read.
 No inference request reaches an upstream provider.
 
+## M4 API error contracts (`apply_api_errors.py`)
+
+`test_api_errors.py` drives the real ASGI app with an OpenRouter-shaped provider at the
+httpx transport (including its usage chunk after the finish chunk) and the real
+`_ProxyDBLogger` writing into a recording DB writer. It covers API-04.S05/S06 (mock fields
+refused; validation rejections write no spend log and call no provider), API-07.S07 (no
+choice after the finish chunk, proxy and sync/async wrapper), API-11.S02 (tool_call_id must
+answer an earlier assistant tool call), API-22.S01/S02 (OpenAI envelope with `code` equal to
+the HTTP status on OpenAI routes; generic 500 for unhandled exceptions; `/v1/completions`
+without `prompt` is a 400). Each has a guard: key-allowed mock responses, provider failures
+and successes still logged, matching tool ids forwarded, management/Anthropic/unknown-root
+error bodies unchanged, provider errors keep their status and message.
+
+The patch runs last (after `apply_login_throttle.py`) on both the HA and PaaS chains and
+adds `proxy/woow_api_errors.py`. The image harness verifies its final hashes through
+`final_api_patches(api, routes, errors)`.
+
 ## Build integration
 
 The candidate Dockerfile invokes the new `apply_api_compat.py` after the existing
