@@ -15,10 +15,14 @@ P1  Budget admission is strict (a request whose input plus reasoning reserve doe
     x-should-retry: false and no longer echoes the key hash, and an unpriced model used by a
     budget-limited key is logged (or refused).
 P2  reasoning_effort is forwarded to OpenRouter for every model, not only models in the cost map.
+D1  Authentication and key errors (unknown, deleted or revoked key, key not in cache, ...) and
+    key-scoped rate-limit errors reach clients, failure callbacks and spend-log error_information
+    without the virtual key's hash; the masked sk-...last4 stays, and the auth error logged on the
+    server keeps the hash for admins.
 
-Runs last, after apply_api_errors.py, on both the HA and the PaaS chains. Eight inputs are pristine
+Runs last, after apply_api_errors.py, on both the HA and the PaaS chains. Nine inputs are pristine
 LiteLLM 1.104.0 files; proxy/common_request_processing.py is the reviewed apply_api_errors.py
-output. Validate every input, replacement count, output hash, both helpers and Python syntax
+output. Validate every input, replacement count, output hash, every helper and Python syntax
 before writing anything. One-shot: a second application intentionally fails closed.
 """
 import hashlib
@@ -35,6 +39,10 @@ HELPERS = {
     'proxy/woow_request_guard.py': (
         'woow_request_guard.py',
         'b24669ba4757786988f482ccf788ba02258c37daea04a36e18256f812f775980',
+    ),
+    'proxy/auth/woow_auth_errors.py': (
+        'woow_auth_errors.py',
+        'ba8b4c8f5b750f66f3af1b974970130a75c696ad434b5c0944b7a167b0ce5e9f',
     ),
 }
 
@@ -323,7 +331,7 @@ PATCHES = {
     ),
     'proxy/auth/auth_exception_handler.py': (
         '9da190e8c1f5db0287f420c20e875069eae16b6af76b8188378600e7347998a2',
-        'ef8f940a07dcd14a044f736abaa0d5ef34cc3f56c30f903a82251fa671dc3d66',
+        '688c415b964dbc0b70d5b3dcdb8ae33fc3cbd1e6c6db4c657259a2ac16cc86e0',
         ((
             '            type=ProxyErrorTypes.budget_exceeded,\n'
             '            param=None,\n'
@@ -334,6 +342,40 @@ PATCHES = {
             '            code=getattr(e, "status_code", status.HTTP_429_TOO_MANY_REQUESTS),\n'
             '            headers={"x-should-retry": "false"},  # Woow P1: retrying cannot succeed\n'
             '        )\n',
+            1,
+        ), (
+            '                exc_info=True if litellm.log_client_error_tracebacks or not is_expected_client_error(e) else None,\n'
+            '                extra=log_extra,\n'
+            '            )\n',
+            '                exc_info=True if litellm.log_client_error_tracebacks or not is_expected_client_error(e) else None,\n'
+            '                extra=log_extra,\n'
+            '            )\n'
+            '            # Woow D1: the server log above keeps the key hash for admins; the client, failure\n'
+            '            # callbacks and the spend log get the message without it (masked sk-...last4 stays).\n'
+            '            from litellm.proxy.auth.woow_auth_errors import scrub_auth_exception\n'
+            '\n'
+            '            scrub_auth_exception(e)\n',
+            1,
+        ), (
+            '            final_exception: Final = mark_invalid_virtual_key_error(_as_proxy_exception(e), is_invalid_virtual_key)\n',
+            '            # Woow D1: also covers an error a failure callback returned in place of the original.\n'
+            '            final_exception: Final = mark_invalid_virtual_key_error(\n'
+            '                scrub_auth_exception(_as_proxy_exception(e)), is_invalid_virtual_key\n'
+            '            )\n',
+            1,
+        ),),
+    ),
+    'proxy/hooks/parallel_request_limiter_v3.py': (
+        '90c865d2b1912ef25c90f988ccd5b56b452edc5f0e57c7320b864c542dd9b8ec',
+        '5e155c3dbbd3c9944b0b03ab1b84bb50aaf00199abade37ea04eb62d1377a316',
+        ((
+            '                detail = (\n'
+            '                    f"Rate limit exceeded for {descriptor_key}: {descriptor_value}. "\n',
+            '                # Woow D1: api_key, model_per_key, tag_per_key and mcp_per_key values carry the key hash.\n'
+            '                from litellm.proxy.auth.woow_auth_errors import scrub_key_hash\n'
+            '\n'
+            '                detail = (\n'
+            '                    f"Rate limit exceeded for {descriptor_key}: {scrub_key_hash(descriptor_value)}. "\n',
             1,
         ),),
     ),
