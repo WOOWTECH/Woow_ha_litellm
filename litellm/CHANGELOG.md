@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.10
+
+2026-10-15
+
+### 安全修正
+
+- 驗證失敗的錯誤不再回顯虛擬金鑰的雜湊（缺陷 D1，GitHub issue #19）：已刪除、已撤銷或不存在的金鑰，原本回 `Authentication Error, Invalid proxy server token passed. Received API Key = sk-...ppyA, Key Hash (Token) =<64 位十六進位>. Unable to find token in cache or ...`，Hermes 等用戶端會把整段原文轉進回覆、`X-Hermes-Error` 標頭與會被備份的 request dump。現在回 ``Authentication Error, Invalid proxy server token passed. Received API Key = sk-...ppyA. Unable to find token in cache or `LiteLLM_VerificationTokenTable` ``；保留遮蔽後的金鑰末 4 碼，讓呼叫端知道是哪一把被拒（與 OpenAI 的 `Incorrect API key provided` 相同做法）。chat、串流、`/v1/messages`、`/v1/models`、`/key/info` 等所有經過金鑰驗證的路由都適用。
+- 同一批錯誤寫進用量紀錄（spend log）`error_information` 的訊息也不再含金鑰雜湊，內部使用者看到的是同一段清洗後的文字；失敗回呼（callback）拿到的例外同樣已清洗。管理員要對應金鑰時，伺服器記錄的那一筆 ERROR 仍保留原文（含雜湊），用量紀錄該列的 `api_key` 欄位與預算錯誤的 `error_budget_entity_id` 也照舊。
+- 金鑰層級的速率限制（金鑰設定 `rpm_limit`／`tpm_limit`／`max_parallel_requests`、逐模型限制，以及預算用完後的節流）回 429 時，訊息原本以金鑰雜湊稱呼金鑰，現在改為 `Rate limit exceeded for api_key: [redacted]. ...`（逐模型限制為 `[redacted]:<模型>`）；伺服器記錄這一行改以 `litellm_call_id` 對應用量紀錄。
+- HTTP 狀態碼、錯誤的 `type`／`code`／`param` 與回應標頭都不變，只改訊息文字；過期、停用金鑰與格式錯誤金鑰的訊息原本就不含雜湊，維持不變。
+
 ## 0.1.9
 
 2026-10-14
