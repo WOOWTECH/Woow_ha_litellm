@@ -137,9 +137,11 @@ CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDON_IP:8099/")"
 req "a/8099 from another address → 403 ($CODE)" test "$CODE" = 403
 LOC="$(in_addon curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://127.0.0.1:4000/)"
 req "a/http://127.0.0.1:4000/ redirects to /ui/ ($LOC)" grep -qE '^30[1278] http://127\.0\.0\.1:4000/ui/$' <<< "$LOC"
+# `test` through sh: the image PATH starts with /app/.venv/bin, which ships an unrelated `test` script.
 req "a/readiness flag written once LiteLLM answers (Ingress 502 → JSON, not 'starting')" \
-  sh -c "for _ in \$(seq 1 60); do docker exec $CUR test -f /run/woow/litellm.ready && exit 0; sleep 1; done; exit 1"
-req "a/no stored name with '%': the Ingress write guard is off" sh -c "! docker exec $CUR test -e /run/woow/ingress-percent-guard"
+  sh -c "for _ in \$(seq 1 60); do docker exec $CUR sh -c 'test -f /run/woow/litellm.ready' && exit 0; sleep 1; done; exit 1"
+req "a/no stored name with '%': the Ingress write guard is off" \
+  sh -c "docker exec $CUR sh -c 'test -d /run/woow && test ! -e /run/woow/ingress-percent-guard'"
 python3 "$HERE/smoke_checks.py" local || true
 endgroup
 
