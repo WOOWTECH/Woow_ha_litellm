@@ -77,6 +77,7 @@ ACCOUNTS_DIR = os.path.join(TOKEN_DIR, "accounts")
 PATCH_TARGET = "litellm.llms.chatgpt.authenticator"
 CHAT_TARGET = "litellm.llms.chatgpt.chat.transformation"
 RESPONSES_TARGET = "litellm.llms.chatgpt.responses.transformation"
+PROXY_UTILS_TARGET = "litellm.proxy.utils"
 PROXY_TARGET = "litellm.proxy.proxy_server"
 # The account's model list is the one the Codex CLI reads (codex-rs models manager); the
 # backend wants a client_version and answers with the models this plan may use.
@@ -100,6 +101,15 @@ def not_connected_message(account: str) -> str:
 
 
 NOT_CONNECTED = not_connected_message(DEFAULT_ACCOUNT)
+
+# R02: a chatgpt/ deployment uses the account it is set up with (model_list / DB). A request
+# naming another account (api_key "woow-chatgpt:<account>", litellm_credential_name, …) is refused.
+ACCOUNT_OVERRIDE_MESSAGE = (
+    "A ChatGPT subscription model uses the account its deployment is set up with; a request cannot choose "
+    "the account (api_key woow-chatgpt:<account>, litellm_credential_name, custom_llm_provider or another key). "
+    "ChatGPT 訂閱模型一律使用部署設定的帳號，請求不可指定帳號（api_key woow-chatgpt:<帳號>、"
+    "litellm_credential_name、custom_llm_provider 或其他金鑰）。"
+)
 
 
 def _log(msg: str) -> None:
@@ -401,6 +411,12 @@ _LOCKS_GUARD = threading.Lock()
 _AUTHENTICATORS: dict[str, object] = {}
 _PENDING_AUTH_WRITES: dict[str, dict] = {}
 _AUTH_WRITE_ERRORS: dict[str, str] = {}
+# R14 (all keyed by the token file's absolute path, this process only):
+_DB_HOLDS: dict[str, dict] = {}  # the record the database is known to hold (no re-save needed)
+_RECONCILED: set[str] = set()  # compared with the database copy since this process started
+_RECONCILE_FAILED_AT: dict[str, float] = {}  # monotonic time of the last failed comparison
+_TOKEN_UNUSABLE: dict[str, str] = {}  # the last token attempt failed with 401 (no success since)
+RECONCILE_RETRY_SECONDS = 30.0
 
 
 def _record_revision(record: dict | None) -> int:
@@ -426,6 +442,10 @@ def _persist_auth_record(path: str, record: dict) -> bool:
     account = _account_for_path(path)
     needs_db = bool(account and _has_tokens(record) and db_available())
     db_ok = _db_save_logged(account, record) if needs_db else False
+    if db_ok:
+        _DB_HOLDS[path] = record
+    else:
+        _DB_HOLDS.pop(path, None)
     if file_ok:
         _PENDING_AUTH_WRITES.pop(path, None)
     if not file_ok:
@@ -452,6 +472,80 @@ def _lock_for(path: str) -> threading.RLock:
     key = os.path.abspath(path)
     with _LOCKS_GUARD:
         return _LOCKS.setdefault(key, threading.RLock())
+
+
+def _is_newer(stored: dict | None, record: dict | None) -> bool:
+    """The durable (database) copy should replace what this process uses."""
+    return _has_tokens(stored) and (not _has_tokens(record) or _record_revision(stored) > _record_revision(record))
+
+
+def _adopt_durable(account: str, path: str, stored: dict | None) -> str | None:
+    """Caller holds the account's lock. When the database copy is newer than what this process
+    uses (pending or file), use it from now on — memory first, so a failing file write can never
+    put the older (already rotated) refresh token back in use; then write the file.
+    → None (not newer), "file" (file written) or "memory" (file write failed; kept in memory)."""
+    key = os.path.abspath(path)
+    if not _is_newer(stored, _PENDING_AUTH_WRITES.get(key) or _read_json(path)):
+        return None
+    _PENDING_AUTH_WRITES[key] = stored
+    _DB_HOLDS[key] = stored
+    _TOKEN_UNUSABLE.pop(key, None)
+    try:
+        _write_json(path, stored)
+    except OSError as exc:
+        _AUTH_WRITE_ERRORS[key] = "token_file_write_failed"
+        _log(f"WARNING ChatGPT sign-in ({account}): the database holds a newer copy than the token file, "
+             f"which cannot be written ({type(exc).__name__}); using the database copy from memory")
+        return "memory"
+    _PENDING_AUTH_WRITES.pop(key, None)
+    _AUTH_WRITE_ERRORS.pop(key, None)
+    return "file"
+
+
+def _reconcile_once(path: str) -> None:
+    """First token use of an account in this process (caller holds its lock): adopt a newer
+    database copy. The WOOW chart restores in a separate process before the proxy starts; when
+    that restore could not write the token file, the proxy would otherwise read the old file and
+    send an already-rotated refresh token to OpenAI (R14). A failed comparison is retried after
+    RECONCILE_RETRY_SECONDS, never on every request."""
+    key = os.path.abspath(path)
+    if key in _RECONCILED:
+        return
+    account = _account_for_path(path)
+    if account is None or not db_available():
+        _RECONCILED.add(key)
+        return
+    failed_at = _RECONCILE_FAILED_AT.get(key)
+    if failed_at is not None and time.monotonic() - failed_at < RECONCILE_RETRY_SECONDS:
+        return
+    try:
+        _adopt_durable(account, path, db_load(account))
+    except Exception as exc:  # noqa: BLE001 — the file stays in use; retried later
+        _RECONCILE_FAILED_AT[key] = time.monotonic()
+        _log(f"WARNING could not compare the ChatGPT sign-in ({account}) with its database copy: {type(exc).__name__}")
+        return
+    _RECONCILE_FAILED_AT.pop(key, None)
+    _RECONCILED.add(key)
+
+
+def _retry_pending(path: str, pending: dict, error_cls) -> None:
+    """Caller holds the lock. A record only this process holds in memory: try to save it again.
+    When the database already holds exactly this record only the file is behind — retry the
+    file alone (no database write per request while the token directory is unwritable)."""
+    key = os.path.abspath(path)
+    if _DB_HOLDS.get(key) == pending:
+        try:
+            _write_json(path, pending)
+        except OSError:
+            return  # still served from memory; _AUTH_WRITE_ERRORS keeps saying why
+        if _PENDING_AUTH_WRITES.get(key) is pending:
+            _PENDING_AUTH_WRITES.pop(key, None)
+        _AUTH_WRITE_ERRORS.pop(key, None)
+        return
+    try:
+        _persist_auth_record(path, pending)
+    except OSError:
+        raise error_cls(message="ChatGPT sign-in storage failed; retry after storage recovery", status_code=503) from None
 
 
 def authenticator(account: str):
@@ -485,6 +579,91 @@ def resolve(api_key) -> tuple[str, str | None, str]:
     return token, _token_account_id(token) or auth.get_account_id(), account
 
 
+# ── account binding (R02) ─────────────────────────────────────────────────────
+def credential_accounts() -> dict[str, str]:
+    """{credential name: account} for every ChatGPT credential. A ChatGPT credential without an
+    account reference (made by chart 0.2.2, before several accounts existed) belongs to the
+    default account — at request time it carries no api_key, so it resolves there too."""
+    import litellm
+
+    out = {}
+    for cred in list(getattr(litellm, "credential_list", None) or []):
+        values = getattr(cred, "credential_values", None) or {}
+        account = parse_account_ref(values.get("api_key"))
+        if account:
+            out[cred.credential_name] = account
+        elif _is_chatgpt_credential(cred) and not values.get("api_key"):
+            out[cred.credential_name] = DEFAULT_ACCOUNT
+    return out
+
+
+def _is_chatgpt_credential(cred) -> bool:
+    info = getattr(cred, "credential_info", None) or {}
+    return str(info.get("custom_llm_provider") or "").lower() == "chatgpt"
+
+
+def is_chatgpt_params(params) -> bool:
+    params = params or {}
+    return str(params.get("model") or "").startswith("chatgpt/") or params.get("custom_llm_provider") == "chatgpt"
+
+
+def deployment_account(params: dict, credentials: dict | None = None) -> str:
+    """The account a chatgpt/ deployment's litellm_params are bound to: its own reference, else its
+    ChatGPT credential's account, else the default account (what resolve() picks for it)."""
+    params = params or {}
+    if credentials is None:
+        credentials = credential_accounts()
+    return (parse_account_ref(params.get("api_key")) or credentials.get(params.get("litellm_credential_name"))
+            or DEFAULT_ACCOUNT)
+
+
+def _call_model_id(litellm_params) -> str | None:
+    """The router deployment a call was made for. When the caller supplied credentials, LiteLLM's
+    Router serves the call from a per-request copy of the deployment with a new id and keeps the
+    configured deployment's id as original_model_id."""
+    info = litellm_params.get("model_info") if isinstance(litellm_params, dict) else getattr(litellm_params, "model_info", None)
+    if not isinstance(info, dict):
+        info = {"id": getattr(info, "id", None), "original_model_id": getattr(info, "original_model_id", None)}
+    for model_id in (info.get("original_model_id"), info.get("id")):
+        if isinstance(model_id, str) and model_id:
+            return model_id
+    return None
+
+
+def _router_deployment(model_id: str | None) -> dict | None:
+    if not model_id:
+        return None
+    router = getattr(sys.modules.get(PROXY_TARGET), "llm_router", None)
+    for d in list(getattr(router, "model_list", None) or []):
+        if isinstance(d, dict) and (d.get("model_info") or {}).get("id") == model_id:
+            return d
+    return None
+
+
+def account_override_error(model):
+    from litellm.exceptions import BadRequestError
+
+    return BadRequestError(message=ACCOUNT_OVERRIDE_MESSAGE, model=model, llm_provider="chatgpt")
+
+
+def check_deployment_binding(model, api_key, litellm_params) -> None:
+    """Provider-side half of R02 (the proxy's pre-call guard is the other): a call the router made
+    for one of its deployments must use that deployment's account. LiteLLM merges request values
+    over the deployment's (``{**deployment, **request}``), so a request-level api_key — a
+    reference, a credential's reference, or any other string (which would resolve to the default
+    account) — would otherwise switch accounts, also on paths the pre-call guard cannot see
+    (router-level fallbacks). A real access token is the caller's own ChatGPT sign-in and passes.
+    Calls that are not a router deployment's (the admin /api/test, SDK use) are not checked."""
+    if _looks_like_access_token(api_key):
+        return
+    deployment = _router_deployment(_call_model_id(litellm_params))
+    if deployment is None:
+        return
+    params = deployment.get("litellm_params") or {}
+    if not is_chatgpt_params(params) or (parse_account_ref(api_key) or DEFAULT_ACCOUNT) != deployment_account(params):
+        raise account_override_error(model)
+
+
 def _patch_authenticator(module) -> None:
     cls = module.Authenticator
     if getattr(cls, "_woow_patched", False):
@@ -513,14 +692,20 @@ def _patch_authenticator(module) -> None:
     original_get_access_token = cls.get_access_token
 
     def get_access_token(self):
+        key = os.path.abspath(self.auth_file)
         with _lock_for(self.auth_file):
-            pending = _PENDING_AUTH_WRITES.get(os.path.abspath(self.auth_file))
+            _reconcile_once(self.auth_file)  # R14: never start from an older file than the database
+            pending = _PENDING_AUTH_WRITES.get(key)
             if pending:
-                try:
-                    _persist_auth_record(self.auth_file, pending)
-                except OSError:
-                    raise error_cls(message="ChatGPT sign-in storage failed; retry after storage recovery", status_code=503) from None
-            return original_get_access_token(self)
+                _retry_pending(self.auth_file, pending, error_cls)
+            try:
+                token = original_get_access_token(self)
+            except error_cls as exc:
+                if getattr(exc, "status_code", None) == 401:  # refresh refused / not signed in
+                    _TOKEN_UNUSABLE[key] = "sign_in_rejected"
+                raise
+            _TOKEN_UNUSABLE.pop(key, None)
+            return token
 
     cls._read_auth_file = _read_auth_file
     cls._login_device_code = _login_device_code
@@ -557,6 +742,7 @@ def _patch_chat(module) -> None:
 
     def validate_environment(self, headers, model, messages, optional_params, litellm_params, api_key=None, api_base=None):
         key = api_key or (litellm_params or {}).get("api_key")
+        check_deployment_binding(model, key, litellm_params)
         try:
             token, account_id, _ = resolve(key)
         except Exception as exc:  # noqa: BLE001 — GetAccessTokenError
@@ -582,6 +768,7 @@ def _patch_responses(module) -> None:
         key = getattr(litellm_params, "api_key", None) if litellm_params is not None else None
         if key is None and isinstance(litellm_params, dict):
             key = litellm_params.get("api_key")
+        check_deployment_binding(model, key, litellm_params)
         try:
             token, account_id, _ = resolve(key)
         except Exception as exc:  # noqa: BLE001 — GetAccessTokenError
@@ -591,6 +778,31 @@ def _patch_responses(module) -> None:
 
     cls.validate_environment = validate_environment
     cls._woow_patched = True
+
+
+def _patch_proxy_logging(module) -> None:
+    """R02: run the ChatGPT account guard (woow_chatgpt_plugin.check_request) in front of every
+    proxy pre-call hook. The WOOW chart and the HA add-on load the plugin through sitecustomize,
+    not litellm_settings.callbacks, so a CustomLogger hook alone never ran there — and a callbacks
+    list set in the admin UI could drop it anyway. This seam runs before routing, while request
+    values are still separate from the deployment's."""
+    cls = getattr(module, "ProxyLogging", None)
+    original = getattr(cls, "pre_call_hook", None)
+    if original is None or getattr(original, "_woow_account_guard", False):
+        return
+
+    async def pre_call_hook(self, *args, **kwargs):
+        data = kwargs["data"] if "data" in kwargs else (args[1] if len(args) > 1 else None)
+        user = kwargs["user_api_key_dict"] if "user_api_key_dict" in kwargs else (args[0] if args else None)
+        if isinstance(data, dict):
+            import woow_chatgpt_plugin
+
+            woow_chatgpt_plugin.check_request(user, data)
+        return await original(self, *args, **kwargs)
+
+    pre_call_hook._woow_account_guard = True
+    pre_call_hook.__wrapped__ = original
+    cls.pre_call_hook = pre_call_hook
 
 
 def _install_plugin_routes(module) -> None:
@@ -605,6 +817,7 @@ _HOOKS = {
     PATCH_TARGET: _patch_authenticator,
     CHAT_TARGET: _patch_chat,
     RESPONSES_TARGET: _patch_responses,
+    PROXY_UTILS_TARGET: _patch_proxy_logging,
     PROXY_TARGET: _install_plugin_routes,
 }
 
@@ -804,25 +1017,27 @@ def sign_in_state(account: str = DEFAULT_ACCOUNT) -> dict:
 
 
 def _sign_in_state_locked(account: str) -> dict:
+    """Reports the very record the request path uses (R14): a newer database copy is adopted
+    first — also when the token file is missing — exactly as the first request would."""
+    path = os.path.abspath(auth_path(account))
+    stored, adopted, db_error = None, None, None
+    if db_available():
+        try:
+            stored = db_load(account)
+            # A refresh may have saved only its DB copy before the process died.
+            # Status must never "heal" that newer copy back to the stale file.
+            adopted = _adopt_durable(account, path, stored)
+            _RECONCILED.add(path)
+        except Exception as exc:  # noqa: BLE001
+            db_error = type(exc).__name__
     record = account_record(account)
     out = {"account": account, **describe(record)}
     out["storage"] = "database" if db_available() else "file"
     if _has_tokens(record):
         try:
-            stored = db_load(account)
-            path = os.path.abspath(auth_path(account))
-            if _has_tokens(stored) and _record_revision(stored) > _record_revision(record):
-                # A refresh may have saved only its DB copy before the process died.
-                # Status must never "heal" that newer copy back to the stale file.
-                _PENDING_AUTH_WRITES[path] = stored
-                try:
-                    _write_json(path, stored)
-                except OSError:
-                    _AUTH_WRITE_ERRORS[path] = "token_file_write_failed"
-                else:
-                    _PENDING_AUTH_WRITES.pop(path, None)
-                    _AUTH_WRITE_ERRORS.pop(path, None)
-                out.update(describe(stored))
+            if db_error:
+                raise RuntimeError(db_error)
+            if adopted:
                 out["persisted"] = True
             elif not stored or stored.get("refresh_token") != record.get("refresh_token"):
                 out["persisted"] = _db_save_logged(account, record)
@@ -832,8 +1047,13 @@ def _sign_in_state_locked(account: str) -> dict:
                 _AUTH_WRITE_ERRORS.pop(path, None)
         except Exception as exc:  # noqa: BLE001
             out["persisted"] = False
-            out["persist_error"] = type(exc).__name__
-    write_error = _AUTH_WRITE_ERRORS.get(os.path.abspath(auth_path(account)))
+            out["persist_error"] = db_error or type(exc).__name__
+        if out.get("connected") and _TOKEN_UNUSABLE.get(path):
+            # The last request on this account could not get a token (refresh refused): the
+            # sign-in on record is not usable, so the status must not say "connected".
+            out["connected"] = False
+            out["error"] = _TOKEN_UNUSABLE[path]
+    write_error = _AUTH_WRITE_ERRORS.get(path)
     if write_error:
         out["persist_error"] = write_error
     pending = _read_json(_pending_path(account))
@@ -955,6 +1175,7 @@ def _connected_result(account: str, t: dict) -> dict:
             persisted = _persist_auth_record(auth_path(account), _new_auth_record(auth_path(account), record))
         except OSError:
             return {"ok": False, "account": account, "state": "error", "error": "token_storage_failed"}
+        _TOKEN_UNUSABLE.pop(os.path.abspath(auth_path(account)), None)
     _remove(_pending_path(account))
     _remove(_browser_pending_path(account))
     return {"ok": True, "state": "connected", "account": account, **describe(record), "persisted": persisted}
@@ -1076,32 +1297,52 @@ def disconnect(account: str = DEFAULT_ACCOUNT) -> dict:
                 remove_files()
         except Exception as exc:  # noqa: BLE001 — rollback occurs before reporting failure
             return {"ok": False, "account": account, "state": "error", "error": phase, "detail": type(exc).__name__}
-        _PENDING_AUTH_WRITES.pop(cache_key, None)
-        _AUTH_WRITE_ERRORS.pop(cache_key, None)
+        for table in (_PENDING_AUTH_WRITES, _AUTH_WRITE_ERRORS, _DB_HOLDS, _TOKEN_UNUSABLE):
+            table.pop(cache_key, None)
     return {"ok": True, "account": account, "state": "disconnected", "connected": False}
 
 
 def restore() -> dict:
-    """Restore the newest durable copy before the proxy starts; never roll back rotation."""
-    kept, restored = [], []
+    """Restore the newest durable copy (before the proxy starts, and again inside it before the
+    first model-list sync); never roll back rotation. Every account on its own (R14): one that
+    fails is reported and the others still restore. A newer database copy whose token file
+    cannot be written (EACCES, ENOSPC) is kept in memory — the same as a refresh whose file write
+    failed — so this process never falls back to the older file; the proxy process adopts it on
+    first use (_reconcile_once). A kept file whose database copy cannot be saved is reported
+    (db_save_failed — what the HA add-on's apply_restore_fix.py added).
+    → ok false with error (one kind, or restore_incomplete) and failed=[{account, error}]."""
+    kept, restored, failed = [], [], []
     try:
         stored = db_accounts()
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "state": "error", "error": "db_load_failed", "detail": type(exc).__name__, "kept": kept}
     for account in sorted(set(file_accounts()) | set(stored)):
         path = auth_path(account)
-        record = account_record(account)
-        saved = stored.get(account)
-        if _has_tokens(saved) and (not _has_tokens(record) or _record_revision(saved) > _record_revision(record)):
-            _write_json(path, saved)
-            _PENDING_AUTH_WRITES.pop(os.path.abspath(path), None)
-            _AUTH_WRITE_ERRORS.pop(os.path.abspath(path), None)
-            restored.append(account)
-        elif _has_tokens(record):
-            _db_save_logged(account, record)
-            kept.append(account)
+        try:
+            with _lock_for(path):
+                saved = stored.get(account)
+                adopted = _adopt_durable(account, path, saved)
+                if adopted:
+                    restored.append(account)
+                    if adopted == "memory":
+                        failed.append({"account": account, "error": "token_file_write_failed"})
+                elif _has_tokens(account_record(account)):
+                    if not _db_save_logged(account, account_record(account)):
+                        _log(f"WARNING ChatGPT restore persistence failed ({account}): db_save_failed; the token file is kept")
+                        failed.append({"account": account, "error": "db_save_failed"})
+                    elif db_available():
+                        _DB_HOLDS[os.path.abspath(path)] = account_record(account)
+                    kept.append(account)
+                _RECONCILED.add(os.path.abspath(path))
+        except Exception as exc:  # noqa: BLE001 — the next account still restores
+            _log(f"WARNING ChatGPT sign-in restore failed ({account}): {type(exc).__name__}")
+            failed.append({"account": account, "error": "restore_failed"})
     state = "restored" if restored else ("kept" if kept else "none")
-    return {"ok": True, "state": state, "connected": bool(kept or restored), "kept": kept, "restored": restored}
+    out = {"ok": not failed, "state": state, "connected": bool(kept or restored), "kept": kept, "restored": restored}
+    if failed:
+        kinds = {f["error"] for f in failed}
+        out.update(state="error", error=kinds.pop() if len(kinds) == 1 else "restore_incomplete", failed=failed)
+    return out
 
 
 def list_accounts() -> list[str]:

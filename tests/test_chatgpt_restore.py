@@ -22,8 +22,8 @@ def core(tmp_path, monkeypatch):
     runtime = tmp_path / "runtime"
     runtime.mkdir()
     (runtime / "woow_chatgpt.py").write_bytes((SHARE / "py/woow_chatgpt.py").read_bytes())
-    patcher = load_module("restore_patch", REPO / "litellm/patches/apply_restore_fix.py")
-    patcher.apply(runtime)
+    # 0.1.11: the canonical plugin (charts 0.3.5, R14) carries the restore error contract itself;
+    # the addon-local apply_restore_fix.py patch is gone.
     module = load_module("restore_under_test", runtime / "woow_chatgpt.py")
     monkeypatch.setattr(module, "TOKEN_DIR", str(tmp_path / "tokens"))
     monkeypatch.setattr(module, "AUTH_FILE", str(tmp_path / "tokens/auth.json"))
@@ -73,7 +73,8 @@ def test_restore_write_failure_preserves_newest_file_and_restores_other_accounts
     result = core.restore()
 
     assert result == {"ok": False, "state": "error", "error": "db_save_failed",
-                      "connected": True, "kept": ["a1", "a2"], "restored": ["a3"]}
+                      "connected": True, "kept": ["a1", "a2"], "restored": ["a3"],
+                      "failed": [{"account": "a1", "error": "db_save_failed"}]}
     assert Path(core.auth_path("a1")).read_bytes() == original_a1
     assert Path(core.auth_path("a2")).read_bytes() == original_a2
     assert core.account_record("a2") == database["a2"]
@@ -167,32 +168,3 @@ def test_restore_simultaneous_write_and_read_failures_remain_errors(core, monkey
     assert result["error"] == "db_load_failed"
     assert Path(core.auth_path("a1")).read_bytes() == original
     assert "SYNTHETIC_PRIVATE_DB_DETAIL" not in json.dumps(result) + capsys.readouterr().err
-
-
-def test_restore_patch_refuses_source_drift_before_writing(tmp_path):
-    patcher = load_module("restore_patch_guard", REPO / "litellm/patches/apply_restore_fix.py")
-    path = tmp_path / "woow_chatgpt.py"
-    original = (SHARE / "py/woow_chatgpt.py").read_bytes() + b"\n# source drift\n"
-    path.write_bytes(original)
-    with pytest.raises(SystemExit, match="Refusing changed Woow restore source"):
-        patcher.apply(tmp_path)
-    assert path.read_bytes() == original
-
-
-def test_restore_patch_refuses_context_drift_before_writing(tmp_path, monkeypatch):
-    patcher = load_module("restore_patch_guard", REPO / "litellm/patches/apply_restore_fix.py")
-    path = tmp_path / "woow_chatgpt.py"
-    original = (SHARE / "py/woow_chatgpt.py").read_bytes()
-    path.write_bytes(original)
-    monkeypatch.setattr(patcher, "EDITS", (("absent patch context", "replacement"),))
-    with pytest.raises(SystemExit, match="Refusing changed Woow restore context"):
-        patcher.apply(tmp_path)
-    assert path.read_bytes() == original
-
-
-def test_restore_patch_is_wired_after_canonical_copy():
-    dockerfile = (REPO / "litellm/Dockerfile").read_text()
-    command = "RUN python -I /usr/share/woow-litellm/patches/apply_restore_fix.py"
-    assert dockerfile.count(command) == 1
-    assert dockerfile.index("COPY rootfs/ /") < dockerfile.index(command)
-    assert dockerfile.index("COPY patches/ /usr/share/woow-litellm/patches/") < dockerfile.index(command)

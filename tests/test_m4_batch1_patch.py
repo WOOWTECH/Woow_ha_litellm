@@ -31,7 +31,7 @@ SHARED = {
     'llms/anthropic/experimental_pass_through/adapters/streaming_iterator.py': 'apply_upstream_guard.py',
 }
 EARLIER = ('apply_responses_fix.py', 'apply_subscription_policy.py', 'apply_api_compat.py', 'apply_routes_auth.py',
-           'apply_security_headers.py', 'apply_restore_fix.py', 'apply_login_throttle.py', 'apply_api_errors.py',
+           'apply_security_headers.py', 'apply_login_throttle.py', 'apply_api_errors.py',
            'apply_upstream_guard.py')
 
 

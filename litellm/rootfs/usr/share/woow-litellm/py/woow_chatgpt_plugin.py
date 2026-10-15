@@ -78,26 +78,9 @@ async def _self_call(request, method: str, path: str, body: dict | None = None, 
         return await client.request(method, path, json=body, headers=_auth_headers(request))
 
 
-def _is_chatgpt_credential(cred) -> bool:
-    info = getattr(cred, "credential_info", None) or {}
-    return str(info.get("custom_llm_provider") or "").lower() == "chatgpt"
-
-
 def _credential_accounts() -> dict[str, str]:
-    """{credential name: account} for every ChatGPT credential. A ChatGPT credential without an
-    account reference (made by chart 0.2.2, before several accounts existed) belongs to the
-    default account — at request time it carries no api_key, so it resolves there too."""
-    import litellm
-
-    out = {}
-    for cred in list(getattr(litellm, "credential_list", None) or []):
-        values = getattr(cred, "credential_values", None) or {}
-        account = core.parse_account_ref(values.get("api_key"))
-        if account:
-            out[cred.credential_name] = account
-        elif _is_chatgpt_credential(cred) and not values.get("api_key"):
-            out[cred.credential_name] = core.DEFAULT_ACCOUNT
-    return out
+    """{credential name: account} for every ChatGPT credential (core.credential_accounts)."""
+    return core.credential_accounts()
 
 
 def _find_name(name: str, names) -> str | None:
@@ -135,7 +118,7 @@ def _deployments() -> list[dict]:
         if not model.startswith("chatgpt/"):
             continue
         credential = params.get("litellm_credential_name")
-        account = core.parse_account_ref(params.get("api_key")) or creds.get(credential) or core.DEFAULT_ACCOUNT
+        account = core.deployment_account(params, creds)
         out.append(
             {
                 "id": (d.get("model_info") or {}).get("id"),
@@ -163,19 +146,49 @@ def sync_model_costs(account: str) -> list[str]:
         return core.register_model_costs(core.remote_models(account))
 
 
+def _sync_accounts(accounts) -> None:
+    for acct in accounts:
+        if not core._has_tokens(core.account_record(acct)):
+            continue
+        try:
+            added = sync_model_costs(acct)
+            if added:
+                core._log(f"taught LiteLLM {len(added)} ChatGPT model(s) its model map lacks: {', '.join(added)}")
+        except Exception as exc:  # noqa: BLE001
+            core._log(f"WARNING could not read the ChatGPT model list ({acct}): {type(exc).__name__}: {str(exc)[:200]}")
+
+
 def _sync_model_costs_later(delay: float, account: str | None = None) -> None:
     def run():
         time.sleep(delay)
-        accounts = [account] if account else core.list_accounts()
-        for acct in accounts:
-            if not core._has_tokens(core.account_record(acct)):
-                continue
-            try:
-                added = sync_model_costs(acct)
-                if added:
-                    core._log(f"taught LiteLLM {len(added)} ChatGPT model(s) its model map lacks: {', '.join(added)}")
-            except Exception as exc:  # noqa: BLE001
-                core._log(f"WARNING could not read the ChatGPT model list ({acct}): {type(exc).__name__}: {str(exc)[:200]}")
+        _sync_accounts([account] if account else core.list_accounts())
+
+    threading.Thread(target=run, name="woow-chatgpt-models", daemon=True).start()
+
+
+def restore_then_sync() -> dict | None:
+    """Proxy start (R14): first make this process use the newest durable sign-in of every account
+    (core.restore — a newer database copy wins even when the token file cannot be written), then
+    read the model lists. Reading a model list may refresh the token, so an account whose restore
+    failed — or every account, when the database could not be read — is NOT synced: that could
+    send an already-rotated refresh token to OpenAI and get the account's tokens revoked."""
+    try:
+        result = core.restore()
+    except Exception as exc:  # noqa: BLE001
+        core._log(f"WARNING ChatGPT sign-in check at proxy start failed ({type(exc).__name__}); model lists not read")
+        return None
+    if result.get("error") == "db_load_failed":
+        core._log("WARNING ChatGPT sign-ins could not be read from the database at proxy start; model lists not read")
+        return result
+    skip = {f.get("account") for f in result.get("failed") or [] if f.get("error") == "restore_failed"}
+    _sync_accounts([a for a in core.list_accounts() if a not in skip])
+    return result
+
+
+def _restore_then_sync_later(delay: float) -> None:
+    def run():
+        time.sleep(delay)
+        restore_then_sync()
 
     threading.Thread(target=run, name="woow-chatgpt-models", daemon=True).start()
 
@@ -486,7 +499,7 @@ def install(app) -> None:
         _inject_bridge_into_dashboard(app)
     app.state.woow_chatgpt_installed = True
     core._log(f"ChatGPT subscription page at {PREFIX} (multiple accounts)")
-    _sync_model_costs_later(5)
+    _restore_then_sync_later(5)
 
 
 # ── LiteLLM dashboard bridge ──────────────────────────────────────────────────
@@ -993,44 +1006,100 @@ class WoowChatGPT(_Base):
     enforces_request_content = True
 
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
-        # This is the proxy's pre-routing seam: deployment/credential values have not
-        # been merged yet. The local admin /api/test calls LiteLLM directly instead.
-        model = str(data.get("model") or "")
-        models = {model}
-        # Only authenticated key/team metadata may resolve public model aliases.
-        for field in ("aliases", "team_model_aliases"):
-            aliases = getattr(user_api_key_dict, field, None)
-            if isinstance(aliases, dict):
-                models.update(aliases[name] for name in tuple(models)
-                              if isinstance(aliases.get(name), str))
-        # Router settings resolve global aliases after this hook. Use the same
-        # pinned resolver for both string and {model, hidden} entry shapes.
-        from litellm.router_utils.common_utils import resolve_model_group_alias
-
-        proxy = sys.modules.get("litellm.proxy.proxy_server")
-        router_aliases = getattr(getattr(proxy, "llm_router", None), "model_group_alias", None)
-        for name in tuple(models):
-            target = resolve_model_group_alias(router_aliases, name)
-            if target:
-                models.add(target)
-        key = data.get("api_key")
-        credential = data.get("litellm_credential_name")
-        selects_chatgpt = (
-            any(name.startswith("chatgpt/") for name in models)
-            or data.get("custom_llm_provider") == "chatgpt"
-            or (isinstance(key, str) and key.startswith(core.ACCOUNT_REF_PREFIX))
-            or core._looks_like_access_token(key)
-            or (isinstance(credential, str) and credential in _credential_accounts())
-            or any(d["model_name"] in models for d in _deployments())
-        )
-        if selects_chatgpt and any(
-            data.get(field) is not None
-            for field in ("api_key", "litellm_credential_name", "custom_llm_provider")
-        ):
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=403, detail="ChatGPT account selection must use the configured model")
+        # Loaded through litellm_settings.callbacks (non-chart LiteLLM). The chart and the HA
+        # add-on run the same check from core._patch_proxy_logging; running it twice is harmless.
+        check_request(user_api_key_dict, data)
         return data
+
+
+def _request_models(names, user_api_key_dict) -> set[str]:
+    """Model group names a request may reach: what it names, plus key/team and router aliases."""
+    models = {n for n in names if isinstance(n, str) and n}
+    # Only authenticated key/team metadata may resolve public model aliases.
+    for field in ("aliases", "team_model_aliases"):
+        aliases = getattr(user_api_key_dict, field, None)
+        if isinstance(aliases, dict):
+            models.update(aliases[name] for name in tuple(models) if isinstance(aliases.get(name), str))
+    # Router settings resolve global aliases after this hook. Use the same pinned resolver
+    # for both string and {model, hidden} entry shapes.
+    from litellm.router_utils.common_utils import resolve_model_group_alias
+
+    proxy = sys.modules.get("litellm.proxy.proxy_server")
+    router_aliases = getattr(getattr(proxy, "llm_router", None), "model_group_alias", None)
+    for name in tuple(models):
+        target = resolve_model_group_alias(router_aliases, name)
+        if target:
+            models.add(target)
+    return models
+
+
+def _fallback_targets(data) -> list:
+    try:  # LiteLLM's own walk over fallbacks / context_window_fallbacks / … (nested shapes)
+        from litellm.proxy.auth.auth_utils import iter_request_fallback_targets
+
+        return list(iter_request_fallback_targets(data))
+    except Exception:  # noqa: BLE001 — older LiteLLM: the plain top-level list
+        value = data.get("fallbacks")
+        return list(value) if isinstance(value, list) else []
+
+
+def account_override_field(user_api_key_dict, data) -> str | None:
+    """R02: the request field that would make a ChatGPT subscription model use another account
+    than its deployment's, or None. Checked on the request itself and on each fallback target it
+    names (LiteLLM hands the request's api_key to fallbacks too):
+      * api_key "woow-chatgpt:<account>" — never valid in a request, whatever the model;
+      * litellm_credential_name naming a ChatGPT credential — likewise;
+      * when a ChatGPT model is reachable: any litellm_credential_name, custom_llm_provider, or an
+        api_key that is not a real ChatGPT access token (any other string resolves to the default
+        account). A real access token is the caller's own ChatGPT sign-in: it never reaches an
+        account kept on this server, so it stays allowed (it was before; now stated).
+    Other providers' request keys (bring-your-own key) are untouched."""
+    scopes, names = [data], [data.get("model")]
+    for target in _fallback_targets(data):
+        if isinstance(target, dict):
+            scopes.append(target)
+            names.append(target.get("model"))
+        elif isinstance(target, str):
+            names.append(target)
+    models = _request_models(names, user_api_key_dict)
+    chatgpt_credentials = _credential_accounts()
+    reaches_chatgpt = (
+        any(name.startswith("chatgpt/") for name in models)
+        or any(scope.get("custom_llm_provider") == "chatgpt" for scope in scopes)
+        or any(d["model_name"] in models for d in _deployments())
+    )
+    for scope in scopes:
+        key, credential = scope.get("api_key"), scope.get("litellm_credential_name")
+        if isinstance(key, str) and key.strip().startswith(core.ACCOUNT_REF_PREFIX):
+            return "api_key"
+        if isinstance(credential, str) and _find_name(credential, chatgpt_credentials):
+            return "litellm_credential_name"
+        if reaches_chatgpt:
+            if credential is not None:
+                return "litellm_credential_name"
+            if scope.get("custom_llm_provider") is not None:
+                return "custom_llm_provider"
+            if key is not None and not core._looks_like_access_token(key):
+                return "api_key"
+    return None
+
+
+def check_request(user_api_key_dict, data) -> None:
+    """Refuse a request that tries to pick the ChatGPT account (400, OpenAI error envelope). Runs
+    before routing (core._patch_proxy_logging), where request values are still apart from the
+    deployment's; core.check_deployment_binding backs it up at the provider."""
+    if not isinstance(data, dict):
+        return
+    try:
+        field = account_override_field(user_api_key_dict, data)
+    except Exception as exc:  # noqa: BLE001 — never break unrelated requests; the provider check still holds
+        core._log(f"WARNING ChatGPT account guard skipped: {type(exc).__name__}")
+        return
+    if field is None:
+        return
+    from litellm.proxy._types import ProxyException
+
+    raise ProxyException(message=core.ACCOUNT_OVERRIDE_MESSAGE, type="invalid_request_error", param=field, code=400)
 
 
 if "litellm.proxy.proxy_server" in sys.modules:
