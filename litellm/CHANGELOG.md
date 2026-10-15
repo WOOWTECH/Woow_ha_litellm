@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.11
+
+2026-10-15
+
+### 安全修正
+
+- 唯讀管理員（`proxy_admin_viewer`）不能再呼叫推論：chat、`/v1/completions`、embeddings、Responses、`/v1/messages`、audio、images 等計費路由回 403 `user not allowed to access this OpenAI routes`；管理讀取（GET）照舊可用。
+- ChatGPT 帳號綁定不能被請求覆寫：請求本體帶 `api_key=woow-chatgpt:<帳號>`、ChatGPT 憑證名稱或其他 `litellm_credential_name` 想改用別的 ChatGPT 帳號時回 400；送出前也會再核對一次模型綁定的帳號（Woow 外掛 0.3.5）。使用者自帶 ChatGPT access token 的用法不變。
+- 所有推論路由的上游錯誤統一遮罩：`/v1/completions`、`/v1/messages`（含串流）、Responses 失敗事件、串流錯誤片段都不再帶出 proxy 持有的金鑰、ChatGPT access token、Bearer／`sk-`／JWT 字串或內網主機；連不到上游時一律為 `Connection error.`。
+- `/health`、`/health/latest`、`/health/history` 與寫進健康檢查表的 `error` 套用同一遮罩（管理員也一樣），只留第一行；ChatGPT 端點顯示 `api_base`。
+- 名稱含 `%` 的憑證或模型經 HA 側邊欄操作可能打到另一個同形名稱的資源（HA Supervisor 的 Ingress 會多解碼一次路徑）：新建或改名的憑證名稱、模型 id 不可含 `%` 或 `/`，模型名稱不可含 `%`（回 400 並說明允許的字元）；既有名稱不受影響。已存在含 `%` 的名稱時，經 Ingress 對路徑含 `%` 的 DELETE／PATCH／PUT 回 409，請改用直連 4000 埠操作；啟動時會在記錄列出這類名稱。
+
+### 修正
+
+- 側邊欄 Playground 遇到上游回應標頭較大時不再顯示「LiteLLM 啟動中」：Ingress 的標頭緩衝加大到 16k；「啟動中」頁只在 LiteLLM 尚未就緒時出現，其他連線錯誤改回 JSON（`ingress_proxy_error`）。
+- ChatGPT 模型的串流 Responses 事件中，`response.model` 改為請求的模型群組名，與非串流一致。
+- Woow 外掛同步到 PaaS chart 0.3.5：ChatGPT 登入檔寫入失敗時改用資料庫裡較新的 token，不會再送出已作廢的 refresh token；`/api/status` 與實際可用的 token 一致。原本 add-on 自帶的 restore 補丁已併入共用外掛並移除。
+
 ## 0.1.10
 
 2026-10-15
