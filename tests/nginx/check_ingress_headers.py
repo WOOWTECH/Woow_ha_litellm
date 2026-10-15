@@ -5,6 +5,7 @@ Set NGINX_BROWSER=1 with a Playwright interpreter for same/cross-origin iframe c
 CI also exercises the actual application iframe in smoke/browser_check.py.
 """
 import http.client
+import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
@@ -42,8 +43,33 @@ class Upstream(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def _plain(self, status=200, extra=()):
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        for name, value in extra:
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(b'{"upstream": "%s %s"}' % (self.command.encode(), self.path.encode()))
+
+    def do_DELETE(self):
+        self._plain()
+
+    def do_PATCH(self):
+        self._plain()
+
+    def do_PUT(self):
+        self._plain()
+
     def do_GET(self):
         url = urlsplit(self.path.removeprefix(ENTRY))
+        if url.path == '/header':
+            # A response header of the requested size (R10: nginx's default 4k/8k buffer gave 502).
+            size = int(parse_qs(url.query)['bytes'][0])
+            self._plain(extra=[('X-Woow-Large', 'h' * size)])
+            return
+        if url.path.startswith('/credentials/'):
+            self._plain()
+            return
         if url.path == '/panel':
             case = parse_qs(url.query)['case'][0]
             self.send_response(200)
@@ -94,6 +120,10 @@ class IngressHeaders(unittest.TestCase):
         # synthetic peer/listen/upstream/prefix; no changes to the installed site.
         source = source.replace('@INGRESS_ENTRY@', ENTRY).replace('listen 8099', f'listen 127.0.0.1:{cls.port}')
         source = source.replace('172.30.32.2', '127.0.0.1').replace('127.0.0.1:4000', f'127.0.0.1:{cls.upstream.server_port}')
+        # Readiness flag and Ingress name guard marker: same names, in this disposable root.
+        cls.run_dir = root / 'run'
+        cls.run_dir.mkdir()
+        source = source.replace('/run/woow/', f'{cls.run_dir}/')
         (root/'site.conf').write_text(source)
         # The image has woow-nginx but need not have nginx's compiled default user.
         # This disposable single-process fixture uses root, never product config.
@@ -138,10 +168,10 @@ http {{
         cls.nginx.stderr.close()
 
     @classmethod
-    def request(cls, path):
+    def request(cls, path, method='GET'):
         conn = http.client.HTTPConnection('127.0.0.1', cls.port, timeout=5)
         try:
-            conn.request('GET', path)
+            conn.request(method, path)
             response = conn.getresponse()
             return response.status, response.headers, response.read()
         finally:
@@ -177,6 +207,60 @@ http {{
                             page.close()
             finally:
                 browser.close()
+
+    def flag(self, name, present):
+        path = self.run_dir / name
+        if present:
+            path.write_text('')
+        else:
+            path.unlink(missing_ok=True)
+        self.addCleanup(path.unlink, missing_ok=True)
+
+    def test_large_upstream_header_is_relayed(self):
+        # R10: a 10 KiB response header was an nginx 502 ("starting" page) while LiteLLM had answered.
+        status, headers, body = self.request('/header?bytes=10240')
+        self.assertEqual(status, 200)
+        self.assertEqual(len(headers['X-Woow-Large']), 10240)
+        self.assertTrue(body.startswith(b'{"upstream"'))
+
+    def test_upstream_502_after_ready_is_json_not_starting(self):
+        # Header beyond proxy_buffer_size: nginx's own 502. Before readiness: the starting page;
+        # after it: a JSON error (no auto-reload, nothing a client would retry as "starting").
+        for ready in (True, False):
+            with self.subTest(ready=ready):
+                self.flag('litellm.ready', ready)
+                status, headers, body = self.request('/header?bytes=40000')
+                self.assertEqual(headers['X-Content-Type-Options'], 'nosniff')
+                self.assertEqual(headers['Cache-Control'], 'no-store')
+                if ready:
+                    self.assertEqual(status, 502)
+                    self.assertEqual(headers['Content-Type'], 'application/json')
+                    error = json.loads(body)['error']
+                    self.assertEqual((error['type'], error['code']), ('ingress_proxy_error', '502'))
+                    self.assertNotIn(b'starting', body)
+                else:
+                    self.assertEqual(status, 503)
+                    self.assertIn(b'LiteLLM is starting', body)
+
+    def test_percent_writes_refused_only_while_percent_names_exist(self):
+        # R01: the Supervisor decodes paths once more; with a literal-% name stored, a write
+        # carrying '%' may hit another resource, so it is refused (409) and nothing reaches LiteLLM.
+        cases = [('DELETE', '/credentials/x%2Fy'), ('PATCH', '/credentials/x%20y'), ('PUT', '/model/a%25b/update'),
+                 ('PATCH', '/model/abc/update?x=%20'), ('DELETE', '/credentials/plain'), ('GET', '/credentials/x%2Fy')]
+        for guard in (True, False):
+            self.flag('ingress-percent-guard', guard)
+            for method, path in cases:
+                with self.subTest(guard=guard, method=method, path=path):
+                    status, headers, body = self.request(path, method)
+                    refused = guard and method != 'GET' and '%' in path.split('?')[0]
+                    if refused:
+                        self.assertEqual(status, 409)
+                        self.assertEqual(headers['Content-Type'], 'application/json')
+                        self.assertEqual(json.loads(body)['error']['code'], '409')
+                        self.assertIn(b'4000', body)
+                    else:
+                        self.assertEqual(status, 200)
+                        self.assertEqual(json.loads(body)['upstream'], f'{method} {ENTRY}{path}')
 
     def test_z_startup_503_has_nosniff(self):
         # Last test: remove only the synthetic listener to exercise nginx's own502→503.

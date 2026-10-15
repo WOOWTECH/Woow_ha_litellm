@@ -116,6 +116,9 @@ RUN python -I /usr/share/woow-litellm/patches/apply_login_throttle.py
 RUN python -I /usr/share/woow-litellm/patches/apply_api_errors.py
 # Upstream (OpenRouter) error scrubbing, token limits and budget admission; last, after api_errors.
 RUN python -I /usr/share/woow-litellm/patches/apply_upstream_guard.py
+# M4 batch 1: one client error mask (R03/R15), viewer inference 403 (R04), Responses stream model
+# group (R11), no new '%' or '/' names (R01); last, after the upstream guard it builds on.
+RUN python -I /usr/share/woow-litellm/patches/apply_m4_batch1.py
 
 ARG BUILD_VERSION=0.1.10
 ARG BUILD_REF=unknown
