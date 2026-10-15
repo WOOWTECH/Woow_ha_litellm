@@ -1,2 +1,4 @@
 #!/bin/sh
+# LiteLLM stopped: the Ingress shows its "starting" page again until it answers (woow_service.py).
+rm -f /run/woow/litellm.ready
 exec /usr/local/lib/woow-litellm/svc-finish litellm "$@"

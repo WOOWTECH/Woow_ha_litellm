@@ -114,6 +114,40 @@ output; its other nine targets are pristine 1.104.0 files. It adds
 `x-litellm-model-api-base` on successful responses still names the internal api_base; that
 header is out of scope here and excluded from the leak scan.
 
+## M4 batch 1 contracts (`apply_m4_batch1.py`)
+
+`test_m4_batch1.py` uses the same real ASGI app, auth cache and recording spend writer; the
+provider at the httpx transport echoes the Authorization header it received (`echo`, `echoraw`
+without a Bearer prefix, `echojwt` with a JWT key) and an internal URL into its error body,
+breaks a stream mid-way the same way (`midecho`) or cannot be connected to (`dead`). It covers:
+
+- R03: on chat, chat streaming, `/v1/completions` (with and without streaming), embeddings,
+  Responses (with and without streaming) and `/v1/messages` (with and without streaming), for
+  the master key and a virtual key, no deployment key, JWT, internal host or raw connection
+  detail reaches the client (JSON errors, SSE error frames, the `/v1/messages` adapter's SSE
+  error event, Responses WebSocket failure frames), while the provider's own wording stays;
+  connection failures read `Connection error`; a ChatGPT access token resolved for a request
+  is masked by value.
+- R04: a `proxy_admin_viewer` key gets 403 `user not allowed to access this OpenAI routes` on
+  chat, completions, embeddings, Responses, messages, images and audio, with no provider call
+  and nothing billed; its `GET /v1/models` and other roles are unchanged.
+- R11: every Responses stream event that carries `response` names the requested model group,
+  as the non-streaming response does.
+- R15: `/health` for an admin, the rows written to LiteLLM_HealthCheckTable and
+  `/health/latest` carry a first-line, masked error; ChatGPT endpoints show an `api_base` to
+  admins only.
+- R01: new credential names with `%` or `/`, model names with `%` and client-chosen model ids
+  with `%` or `/` get 400 on create and rename; other names (spaces, CJK, `chatgpt/…` model
+  names) and keeping a stored name are not refused.
+
+The patch runs last (after `apply_upstream_guard.py`) on both chains and checks the upstream
+guard's installed `woow_provider_errors.py` first. Four targets start from earlier outputs
+(`proxy/proxy_server.py` from the API errors patch; `proxy/common_request_processing.py`,
+`proxy/health_endpoints/_health_endpoints.py` and the Anthropic adapter streaming iterator from
+the upstream guard); the other eight are pristine 1.104.0 files. It adds
+`litellm_core_utils/woow_client_guard.py`; the image harness verifies the final hashes through
+`final_api_patches(api, routes, errors, guard, batch1)`.
+
 ## Build integration
 
 The candidate Dockerfile invokes the new `apply_api_compat.py` after the existing

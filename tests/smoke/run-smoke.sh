@@ -137,6 +137,11 @@ CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDON_IP:8099/")"
 req "a/8099 from another address → 403 ($CODE)" test "$CODE" = 403
 LOC="$(in_addon curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://127.0.0.1:4000/)"
 req "a/http://127.0.0.1:4000/ redirects to /ui/ ($LOC)" grep -qE '^30[1278] http://127\.0\.0\.1:4000/ui/$' <<< "$LOC"
+# `test` through sh: the image PATH starts with /app/.venv/bin, which ships an unrelated `test` script.
+req "a/readiness flag written once LiteLLM answers (Ingress 502 → JSON, not 'starting')" \
+  sh -c "for _ in \$(seq 1 60); do docker exec $CUR sh -c 'test -f /run/woow/litellm.ready' && exit 0; sleep 1; done; exit 1"
+req "a/no stored name with '%': the Ingress write guard is off" \
+  sh -c "docker exec $CUR sh -c 'test -d /run/woow && test ! -e /run/woow/ingress-percent-guard'"
 python3 "$HERE/smoke_checks.py" local || true
 endgroup
 
@@ -164,6 +169,7 @@ req "a/clean PostgreSQL shutdown ($CTRL; stop ${STOP_A}s)" grep -q 'shut down' <
 req "a/log has no secret" sh -c "! grep -qF -e \"\$1\" -e \"\$2\" -e \"\$3\" -e \"\$4\" \"\$5\"" _ "$MASTER" "$UIPW" "$PGPW" "$SALT" "$WORK/boot-a.log"
 req "a/log has no access-log lines" sh -c "! grep -qE '\"(GET|POST) /[^ ]* HTTP/1\\.[01]\" [0-9]{3}' \"\$1\"" _ "$WORK/boot-a.log"
 req "a/log shows the Woow plugin page" grep -q 'ChatGPT subscription page at /woow/chatgpt' "$WORK/boot-a.log"
+req "a/name scan read the credential and model tables" grep -q 'woow-name-scan: credential names and model ids checked' "$WORK/boot-a.log"
 docker rm woow-a >/dev/null
 endgroup
 

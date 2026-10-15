@@ -35,7 +35,7 @@ def verify_patched_source(root, patches):
             raise RuntimeError('Built image API patch mismatch: ' + name)
 
 
-def final_api_patches(api_patch, routes_patch, errors_patch, guard_patch):
+def final_api_patches(api_patch, routes_patch, errors_patch, guard_patch, batch1_patch=None):
     patches = dict(api_patch.PATCHES)
     before, after, edits = patches[routes_patch.TARGET]
     if after != routes_patch.EXPECTED:
@@ -53,6 +53,19 @@ def final_api_patches(api_patch, routes_patch, errors_patch, guard_patch):
             raise RuntimeError('Upstream guard patch must follow the exact API errors output: ' + name)
         patches[name] = (patches[name][0] if name in patches else guard_before, guard_after, guard_edits)
     for name, (_, helper_hash) in guard_patch.HELPERS.items():
+        patches[name] = (None, helper_hash, ())
+    if batch1_patch is None:
+        return patches
+    # M4 batch 1 runs last; a file it shares with the chain above must start from its exact output,
+    # and the upstream guard helper it builds on must be the one installed above.
+    for name, expected in batch1_patch.DEPENDENCIES.items():
+        if name not in patches or patches[name][1] != expected:
+            raise RuntimeError('M4 batch 1 patch must follow the exact upstream guard output: ' + name)
+    for name, (batch_before, batch_after, batch_edits) in batch1_patch.PATCHES.items():
+        if name in patches and patches[name][1] != batch_before:
+            raise RuntimeError('M4 batch 1 patch must follow the exact upstream guard output: ' + name)
+        patches[name] = (patches[name][0] if name in patches else batch_before, batch_after, batch_edits)
+    for name, (_, helper_hash) in batch1_patch.HELPERS.items():
         patches[name] = (None, helper_hash, ())
     return patches
 
@@ -109,7 +122,10 @@ def main():
         guard_spec = importlib.util.spec_from_file_location('guard_patch', HERE / 'apply_upstream_guard.py')
         guard_patch = importlib.util.module_from_spec(guard_spec)
         guard_spec.loader.exec_module(guard_patch)
-        final_patches = final_api_patches(patch, routes_patch, errors_patch, guard_patch)
+        batch1_spec = importlib.util.spec_from_file_location('batch1_patch', HERE / 'apply_m4_batch1.py')
+        batch1_patch = importlib.util.module_from_spec(batch1_spec)
+        batch1_spec.loader.exec_module(batch1_patch)
+        final_patches = final_api_patches(patch, routes_patch, errors_patch, guard_patch, batch1_patch)
         verify_patched_source(root, final_patches)
         print(json.dumps({'litellm_version': importlib.metadata.version('litellm'),
                           'source': str(root), 'verified_patch_files': len(final_patches),

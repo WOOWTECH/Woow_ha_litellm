@@ -114,8 +114,9 @@ def test_chain_order_matches_both_images():
 def test_dockerfile_runs_it_before_the_upstream_guard_and_ci_gate_ships_it():
     docker = (REPO / 'litellm/Dockerfile').read_text()
     runs = [line for line in docker.splitlines() if line.startswith('RUN python -I /usr/share/woow-litellm/patches/')]
-    assert runs[-1] == 'RUN python -I /usr/share/woow-litellm/patches/apply_upstream_guard.py'
-    assert runs[-2] == 'RUN python -I /usr/share/woow-litellm/patches/apply_api_errors.py'
-    assert runs[-3] == 'RUN python -I /usr/share/woow-litellm/patches/apply_login_throttle.py'
-    assert docker.index('COPY patches/ /usr/share/woow-litellm/patches/') < docker.index(runs[-2])
+    guard = runs.index('RUN python -I /usr/share/woow-litellm/patches/apply_upstream_guard.py')
+    assert guard == len(runs) - 2  # only M4 batch 1 runs after the upstream guard
+    assert runs[guard - 1] == 'RUN python -I /usr/share/woow-litellm/patches/apply_api_errors.py'
+    assert runs[guard - 2] == 'RUN python -I /usr/share/woow-litellm/patches/apply_login_throttle.py'
+    assert docker.index('COPY patches/ /usr/share/woow-litellm/patches/') < docker.index(runs[guard - 1])
     assert 'litellm/patches/apply_api_errors.py' in (REPO / 'tools/ci-api-contracts.sh').read_text()

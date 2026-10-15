@@ -44,6 +44,7 @@ jobs:
             litellm/rootfs/usr/local/lib/woow-litellm/litellm-start \
             litellm/rootfs/usr/local/lib/woow-litellm/woow-revoke-ui-sessions \
             litellm/rootfs/usr/local/lib/woow-litellm/woow-spendlogs-indexes \
+            litellm/rootfs/usr/local/lib/woow-litellm/woow-name-scan \
             litellm/rootfs/usr/local/bin/woow-healthcheck \
             litellm/rootfs/etc/s6-overlay/s6-rc.d/*/run \
             litellm/rootfs/etc/s6-overlay/s6-rc.d/*/finish \
