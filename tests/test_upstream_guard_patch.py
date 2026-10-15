@@ -20,6 +20,7 @@ PRISTINE = {
     'proxy/spend_tracking/budget_reservation.py': '433bf0a8f2e4ed5d7301c49c4f7d7151da65ed509157429b85bb32f53869cca5',
     'proxy/health_endpoints/_health_endpoints.py': '8ea1e58c7ee57f77e21e7dd4e711f18ef135a485e38564cf0958ff36c0e92a03',
     'proxy/auth/auth_exception_handler.py': '9da190e8c1f5db0287f420c20e875069eae16b6af76b8188378600e7347998a2',
+    'proxy/hooks/parallel_request_limiter_v3.py': '90c865d2b1912ef25c90f988ccd5b56b452edc5f0e57c7320b864c542dd9b8ec',
 }
 EARLIER = ('apply_responses_fix.py', 'apply_subscription_policy.py', 'apply_api_compat.py', 'apply_routes_auth.py',
            'apply_security_headers.py', 'apply_login_throttle.py', 'apply_api_errors.py')
@@ -126,7 +127,8 @@ def test_existing_helper_is_refused_even_with_pristine_targets(tree, helper):
 
 
 def test_pinned_helpers_are_the_reviewed_files():
-    assert set(module.HELPERS) == {'litellm_core_utils/woow_provider_errors.py', 'proxy/woow_request_guard.py'}
+    assert set(module.HELPERS) == {'litellm_core_utils/woow_provider_errors.py', 'proxy/woow_request_guard.py',
+                                   'proxy/auth/woow_auth_errors.py'}
     for name, (source, expected) in module.HELPERS.items():
         assert source == Path(name).name and sha((PATCHES / source).read_bytes()) == expected
 
@@ -198,3 +200,14 @@ def test_installer_cli_refuses_extra_arguments(tmp_path):
     shutil.copy(PATCHES / 'apply_upstream_guard.py', copy)
     result = subprocess.run([sys.executable, '-I', str(copy), 'a', 'b'], capture_output=True, text=True)
     assert result.returncode != 0 and 'Usage: apply_upstream_guard.py' in result.stderr
+
+
+def test_d1_scrub_runs_after_the_server_log_and_before_callbacks():
+    """The auth error is logged with the key hash first; only then are callbacks, the spend log and the
+    client handed the scrubbed exception (the order the edits create in auth_exception_handler.py)."""
+    edits = module.PATCHES['proxy/auth/auth_exception_handler.py'][2]
+    logged = [new for old, new, _ in edits if 'extra=log_extra' in old]
+    assert len(logged) == 1
+    assert logged[0].index('extra=log_extra') < logged[0].index('scrub_auth_exception(e)')
+    final = [new for old, new, _ in edits if 'final_exception' in old]
+    assert len(final) == 1 and 'scrub_auth_exception(_as_proxy_exception(e))' in final[0]

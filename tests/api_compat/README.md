@@ -93,11 +93,24 @@ flagged input) and probe headers. It covers:
 - P2 `reasoning_effort` forwarded for a model missing from the cost map, route-level
   `reasoning` defaults and client overrides, and the empty-content/`length` pass-through.
 
+`test_auth_key_hash.py` (D1) uses the same gateway with a database that holds no
+verification-token row. For an unknown key, a key whose row was deleted after it worked, an
+expired, a blocked, a pasted key hash and a key without the `sk-` prefix, on chat, chat
+streaming, `/v1/messages` (with and without streaming), `/v1/models` and `/key/info`: no 64-hex
+value in the body or headers, the `(status, type, code, param)` envelope recorded on bf0d29b, the
+masked `sk-...last4` kept in the unknown-key message, spend-log `error_information` (message,
+traceback, class) without the hash while the row's `api_key` column and a budget error's
+`error_budget_entity_id` stay, exactly one ERROR server-log record that still holds the hash, and
+a failure callback's replacement error scrubbed too. Key-scoped rate limits (`api_key`,
+`model_per_key`) answer 429 with `[redacted]` in place of the hash; key budget refusals keep
+naming the key by alias.
+
 The patch runs last (after `apply_api_errors.py`) on both chains. It shares only
 `proxy/common_request_processing.py` with earlier installers, starting from the API errors
-output; its other eight targets are pristine 1.104.0 files. It adds
-`litellm_core_utils/woow_provider_errors.py` and `proxy/woow_request_guard.py`, and the image
-harness verifies its final hashes through `final_api_patches(api, routes, errors, guard)`.
+output; its other nine targets are pristine 1.104.0 files. It adds
+`litellm_core_utils/woow_provider_errors.py`, `proxy/woow_request_guard.py` and
+`proxy/auth/woow_auth_errors.py`, and the image harness verifies its final hashes through
+`final_api_patches(api, routes, errors, guard)`.
 `x-litellm-model-api-base` on successful responses still names the internal api_base; that
 header is out of scope here and excluded from the leak scan.
 
