@@ -148,12 +148,43 @@ def _guard():
     return module
 
 
+# Placeholders already in a text ([redacted], [redacted-url], [redacted-host]) and the values masked
+# here are held as short bracketed tokens while the pattern rules run, then restored: LiteLLM's
+# generic ``api_key: <value>`` rule would otherwise eat "api_key: [redacted" (8+ characters) and
+# the guard's api_key rule the punctuation after it.
+_PLACEHOLDER_RE: Final = re.compile(r"\[redacted(?:-[a-z]+)?\]")
+_TOKEN_LIMIT: Final = 0xFF
+
+
+class _Held:
+    def __init__(self) -> None:
+        self.kept = []
+
+    def token(self, original: str) -> str:
+        self.kept.append(original)
+        return "[\ue000" + chr(0xE100 + len(self.kept) - 1) + "]"
+
+    def hold(self, text: str, values: list) -> str:
+        if len(_PLACEHOLDER_RE.findall(text)) + len(values) > _TOKEN_LIMIT:
+            for value in values:
+                text = text.replace(value, REDACTED)
+            return text
+        text = _PLACEHOLDER_RE.sub(lambda match: self.token(match.group(0)), text)
+        for value in values:
+            if value in text:
+                text = text.replace(value, self.token(REDACTED))
+        return text
+
+    def restore(self, text: str) -> str:
+        for index, original in enumerate(self.kept):
+            text = text.replace("[\ue000" + chr(0xE100 + index) + "]", original)
+        return text
+
+
 def mask_secrets(text: str, extra: object = ()) -> str:
     """``text`` without the proxy's own credential values, then the upstream guard's secret rules."""
-    for value in known_secrets(extra):
-        if value in text:
-            text = text.replace(value, REDACTED)
-    return _guard().redact_secrets(text)
+    held = _Held()
+    return held.restore(_guard().redact_secrets(held.hold(text, known_secrets(extra))))
 
 
 # ── internal hosts and connection failures ───────────────────────────────────
@@ -215,7 +246,9 @@ def client_error_message(text: object, extra: object = ()) -> object:
     """The client-facing form of an error text; anything but a string is returned unchanged."""
     if not isinstance(text, str) or not text:
         return text
-    return mask_internal(mask_secrets(normalize_connection_error(text), extra))
+    held = _Held()
+    text = held.hold(normalize_connection_error(text), known_secrets(extra))
+    return held.restore(mask_internal(_guard().redact_secrets(text)))
 
 
 def client_error_dict(error: object) -> object:

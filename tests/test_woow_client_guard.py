@@ -121,6 +121,26 @@ def test_public_hosts_stay(public):
     assert guard.client_error_message(f'see {public} now') == f'see {public} now'
 
 
+LITELLM_API_KEY_RULE = r"(?:api[_-]?key)['\"]?\s*[:=]\s*['\"]?[^\s,'\"})\]{}>]{8,}"  # LiteLLM secret_redaction
+
+
+@pytest.mark.parametrize('text', [
+    'Rate limit exceeded for api_key: [redacted]. Limit type: requests.',  # the upstream guard's D1 wording
+    'Rate limit exceeded for model_per_key: [redacted]:free.',
+    'No endpoints found. Configure: [redacted-url]',
+    'upstream [redacted-host] answered',
+])
+def test_existing_placeholders_survive_litellm_and_guard_rules(monkeypatch, text):
+    import re
+    redaction = types.ModuleType(guard._LITELLM_REDACTION_MODULE)
+    redaction.redact_string = lambda value: re.sub(LITELLM_API_KEY_RULE, 'REDACTED', value, flags=re.I)
+    redaction.redact_internal_details = redaction.redact_string
+    monkeypatch.setitem(sys.modules, guard._LITELLM_REDACTION_MODULE, redaction)
+    assert guard.client_error_message(text) == text
+    with_router(monkeypatch, [{'model_name': 'raw', 'litellm_params': {'api_key': RAW_KEY}}])
+    assert guard.client_error_message(f'api_key: {RAW_KEY}. Next') == 'api_key: [redacted]. Next'
+
+
 def test_traceback_is_cut_and_non_strings_pass():
     assert guard.client_error_message('boom\nTraceback (most recent call last):\n  File "/app/x.py"') == 'boom'
     assert guard.client_error_message(None) is None and guard.client_error_message(3) == 3

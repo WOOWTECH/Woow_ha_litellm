@@ -35,7 +35,7 @@ import sys
 HELPERS = {
     'litellm_core_utils/woow_client_guard.py': (
         'woow_client_guard.py',
-        '4b478bf1e37aae56b25ce1a460033e1ab6194baf88203401dc6c3b60d61a7772',
+        '8207bc9962a4d1bf7ca4aff75a431e99340135dbffa83be26f088c9f3258085e',
     ),
 }
 
