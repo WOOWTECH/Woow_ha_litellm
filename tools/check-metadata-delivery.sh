@@ -19,7 +19,7 @@ repo, charts, commit = sys.argv[1:]
 lock = json.loads((pathlib.Path(repo)/'litellm/woow-plugin.lock.json').read_text())
 if lock['source']['commit'] != commit:
     raise SystemExit('BLOCKED: HA lock does not select the reviewed merged commit')
-for name in ('sitecustomize.py', 'woow_chatgpt.py', 'woow_chatgpt_plugin.py'):
+for name in ('sitecustomize.py', 'woow_chatgpt.py', 'woow_chatgpt_plugin.py', 'woow_reasoning.py'):
     actual = (pathlib.Path(repo)/lock['destination']/name).read_bytes()
     canonical = subprocess.check_output(['git', '-C', charts, 'show', commit+':charts/litellm/files/'+name])
     if actual != canonical:

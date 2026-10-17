@@ -798,11 +798,47 @@ def _patch_proxy_logging(module) -> None:
             import woow_chatgpt_plugin
 
             woow_chatgpt_plugin.check_request(user, data)
+            reasoning = _reasoning_module()
+            if reasoning is not None:
+                reasoning.pre_call(data)
         return await original(self, *args, **kwargs)
 
     pre_call_hook._woow_account_guard = True
     pre_call_hook.__wrapped__ = original
     cls.pre_call_hook = pre_call_hook
+    _patch_reasoning_floor(cls)
+
+
+def _reasoning_module():
+    """woow_reasoning (AI-FIX-LLM-2), or None: the module is optional — a missing file (an older
+    HA add-on bundle) or an import error only leaves requests as they were."""
+    try:
+        import woow_reasoning
+    except Exception as exc:  # noqa: BLE001
+        if not getattr(_reasoning_module, "_logged", False):
+            _reasoning_module._logged = True
+            _log(f"reasoning output floor NOT active: {exc!r}")
+        return None
+    return woow_reasoning
+
+
+def _patch_reasoning_floor(cls) -> None:
+    """Explain a raised output limit / an empty `length` reply on the response (the request side
+    runs inside the pre-call wrapper above, after the account guard)."""
+    post = getattr(cls, "post_call_success_hook", None)
+    if post is None or getattr(post, "_woow_reasoning_floor", False):
+        return
+
+    async def post_call_success_hook(self, *args, **kwargs):
+        out = await post(self, *args, **kwargs)
+        reasoning = _reasoning_module()
+        if reasoning is not None:
+            reasoning.post_call(out if out is not None else kwargs.get("response"))
+        return out
+
+    post_call_success_hook._woow_reasoning_floor = True
+    post_call_success_hook.__wrapped__ = post
+    cls.post_call_success_hook = post_call_success_hook
 
 
 def _install_plugin_routes(module) -> None:

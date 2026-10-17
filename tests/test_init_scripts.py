@@ -265,6 +265,7 @@ GUARD_SWITCHES = {
     "WOOW_PROVIDER_HEADERS": "all", "WOOW_TOKEN_LIMIT_VALIDATION": "off", "WOOW_BUDGET_ADMISSION": "resize",
     "WOOW_BUDGET_UNPRICED": "block_budgeted_keys", "WOOW_BUDGET_REASONING_RESERVE_TOKENS": "4096",
     "WOOW_BUDGET_MIN_INPUT_TOKENS": "0", "WOOW_PROVIDER_ERROR_LOG": "off",
+    "WOOW_REASONING_MIN_OUTPUT_MODE": "reject", "WOOW_REASONING_MIN_OUTPUT_TOKENS": "1024",
 }
 
 
@@ -277,7 +278,7 @@ def test_upstream_guard_switches_are_the_only_settable_woow_env(box):
     lit = box.envdir("litellm")
     assert {k: lit[k] for k in GUARD_SWITCHES} == GUARD_SWITCHES
     assert not set(GUARD_SWITCHES) & set(box.envdir("litellm-migrate"))
-    for key in ("WOOW_PROXY_PORT", "WOOW_DATA_DIR", "WOOW_BUDGET_SOMETHING_ELSE"):
+    for key in ("WOOW_PROXY_PORT", "WOOW_DATA_DIR", "WOOW_BUDGET_SOMETHING_ELSE", "WOOW_REASONING_MODEL_PATTERNS"):
         box.options(DEFAULT_OPTIONS, env_vars=[{"key": key, "value": "1"}])
         res = box.run("env")
         assert res.returncode == 1 and key in res.stderr and "cannot be overridden" in res.stderr
@@ -291,6 +292,8 @@ def test_upstream_guard_switches_are_the_only_settable_woow_env(box):
         ("WOOW_BUDGET_REASONING_RESERVE_TOKENS", "-1"), ("WOOW_BUDGET_MIN_INPUT_TOKENS", "lots"),
         ("WOOW_BUDGET_REASONING_RESERVE_TOKENS", "10000000"),
         ("WOOW_PROVIDER_ERROR_LOG", "verbose"), ("WOOW_PROVIDER_ERROR_LOG", "Raw"),
+        ("WOOW_REASONING_MIN_OUTPUT_MODE", "Raise"), ("WOOW_REASONING_MIN_OUTPUT_MODE", "lift"),
+        ("WOOW_REASONING_MIN_OUTPUT_TOKENS", "many"), ("WOOW_REASONING_MIN_OUTPUT_TOKENS", "-512"),
     ],
 )
 def test_upstream_guard_switch_values_checked(box, key, value):

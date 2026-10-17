@@ -16,7 +16,7 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 dest="$repo/litellm/rootfs/usr/share/woow-litellm/py"
 lock="$repo/litellm/woow-plugin.lock.json"
 src_path="charts/litellm/files"
-files="sitecustomize.py woow_chatgpt.py woow_chatgpt_plugin.py"
+files="sitecustomize.py woow_chatgpt.py woow_chatgpt_plugin.py woow_reasoning.py"
 
 full="$(git -C "$charts" rev-parse --verify "$commit^{commit}")"
 chart_version="$(git -C "$charts" show "$full:charts/litellm/Chart.yaml" | sed -n 's/^version:[[:space:]]*//p' | head -n1)"
