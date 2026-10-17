@@ -83,9 +83,9 @@ RESERVED_PREFIXES = (
     "LITELLM_CONFIG_BUCKET_", "GRANIAN_",
 )
 
-# Upstream-guard switches (apply_upstream_guard.py) an operator may set through env_vars to roll a
-# behaviour back without a new image; every other WOOW_* name stays reserved. Allowed values, or
-# None for a non-negative token count.
+# Upstream-guard switches (apply_upstream_guard.py, plus the plugin's reasoning floor) an operator
+# may set through env_vars to roll a behaviour back without a new image; every other WOOW_* name
+# stays reserved. Allowed values, or None for a non-negative token count.
 GUARD_ENV = {
     "WOOW_PROVIDER_HEADERS": ("allowlist", "all"),
     "WOOW_PROVIDER_ERROR_LOG": ("raw", "off"),
@@ -94,6 +94,9 @@ GUARD_ENV = {
     "WOOW_BUDGET_UNPRICED": ("allow", "block_budgeted_keys"),
     "WOOW_BUDGET_REASONING_RESERVE_TOKENS": None,
     "WOOW_BUDGET_MIN_INPUT_TOKENS": None,
+    # Woow plugin reasoning output floor (py/woow_reasoning.py, AI-FIX-LLM-2); the patterns stay reserved.
+    "WOOW_REASONING_MIN_OUTPUT_MODE": ("raise", "reject", "off"),
+    "WOOW_REASONING_MIN_OUTPUT_TOKENS": None,
 }
 TOKEN_COUNT_RE = re.compile(r"^[0-9]{1,7}$")
 

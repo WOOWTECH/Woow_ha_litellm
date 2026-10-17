@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.12
+
+2026-10-18
+
+### 修正
+
+- 推理型模型（OpenAI o 系列、gpt-5 以上如 gpt-6-luna／gpt-6-astra、DeepSeek R1、QwQ、`…:thinking`、Grok 4 以上，或模型設定 `supports_reasoning`）收到很小的 `max_tokens`／`max_completion_tokens`／`max_output_tokens` 時，不再回 200 但內容是空的（`finish_reason: length`，隱藏推理把額度用光；PaaS 驗收 AI-LLM-003-1 實測 `max_tokens=16` 4/4 空）。現在會把上限抬高到 512，回應帶 `x-woow-max-tokens-raised: 16->512`；上限只是天花板，提早結束的回覆費用不變。請求自己關掉推理（`reasoning.enabled=false`、`reasoning_effort=none`）或帶 Anthropic `thinking` 時不動；非推理模型不動；模型設定 `model_info.woow_min_output_tokens` 可改單一路由的下限（0＝不動該路由）。沒被認出的路由若仍回空內容加 `length`，回應會帶 `x-woow-warning: reasoning_exhausted_max_tokens`。
+- Woow 外掛同步到 PaaS chart 0.3.7（新增 `woow_reasoning.py`，與 PaaS 同一份程式）。需要開啟 ChatGPT 訂閱（`chatgpt_subscription`，預設開）才會載入外掛。
+- 退回開關（`env_vars`）：`WOOW_REASONING_MIN_OUTPUT_MODE`（`raise` 預設／`reject` 回 400 並說明最小值／`off` 回到上一版行為）、`WOOW_REASONING_MIN_OUTPUT_TOKENS`（下限，0＝關閉）。
+
+### 已知限制
+
+- 金鑰預算的預扣發生在抬高上限之前：預算極小的金鑰打推理型路由時，實際花費最多可能比預扣多約 512 個輸出 token 的費用。有這類金鑰時建議把模式設成 `reject`，或在模型設定 `supports_reasoning`（預算准入會為這類路由預留推理額度）。
+
 ## 0.1.11
 
 2026-10-15
