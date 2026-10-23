@@ -1,0 +1,24 @@
+name: Release train
+
+# woow release train, phase 1: compare this add-on's upstream version pins with the
+# version manifest shared by HA and the WOOW PaaS (Gitea woow-paas/woow-release-train,
+# public mirror WOOWTECH/woow-release-train). What fails is decided by the manifest's
+# `enforcement`, not here: in phase 1 only the products' hard rules fail, everything
+# else is a warning annotation. To bypass a hard rule, add an exception with a reason
+# and an expiry date to the manifest (a reviewed pull request).
+# This add-on is not in the Woow HA App Store (private image), so nothing else re-checks
+# the LiteLLM base digest and the Woow plugin lock and copies against the manifest.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Release train
+    uses: WOOWTECH/woow-release-train/.github/workflows/wvt-check.yml@5cb9f40e29cad3b70cbdfd73859dd1113afb710c  # main 2026-10-24; this repo pins every action to a commit
