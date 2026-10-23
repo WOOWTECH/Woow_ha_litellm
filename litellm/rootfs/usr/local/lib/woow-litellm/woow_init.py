@@ -83,9 +83,12 @@ RESERVED_PREFIXES = (
     "LITELLM_CONFIG_BUCKET_", "GRANIAN_",
 )
 
-# Upstream-guard switches (apply_upstream_guard.py) an operator may set through env_vars to roll a
-# behaviour back without a new image; every other WOOW_* name stays reserved. Allowed values, or
-# None for a non-negative token count.
+# Rollback switches an operator may set through env_vars to change a behaviour back without a new
+# image: the upstream guard (apply_upstream_guard.py) and the shared Woow plugin modules
+# (reasoning floor, unpriced-model warning, upstream retry hints/timeouts, request body cap, dashboard
+# cookie hardening); every other WOOW_* name stays reserved. Allowed values, None for a non-negative
+# token count, or a compiled pattern for a number.
+SIZE_MB_RE = re.compile(r"^(0|[1-9][0-9]{0,3})(\.[0-9]{1,2})?$")
 GUARD_ENV = {
     "WOOW_PROVIDER_HEADERS": ("allowlist", "all"),
     "WOOW_PROVIDER_ERROR_LOG": ("raw", "off"),
@@ -94,6 +97,15 @@ GUARD_ENV = {
     "WOOW_BUDGET_UNPRICED": ("allow", "block_budgeted_keys"),
     "WOOW_BUDGET_REASONING_RESERVE_TOKENS": None,
     "WOOW_BUDGET_MIN_INPUT_TOKENS": None,
+    # Woow plugin modules (single source: woow-paas-charts charts/litellm/files). Defaults are written
+    # by litellm_env() below; these are the values an operator may switch to.
+    "WOOW_REASONING_MIN_OUTPUT_MODE": ("raise", "reject", "off"),
+    "WOOW_REASONING_MIN_OUTPUT_TOKENS": None,
+    "WOOW_UNPRICED_MODEL_MODE": ("warn", "reject", "off"),
+    "WOOW_FORWARD_RETRY_AFTER": ("true", "false"),
+    "WOOW_UPSTREAM_TIMEOUT_STATUS": ("504", "408"),
+    "WOOW_MAX_REQUEST_SIZE_MB": SIZE_MB_RE,
+    "WOOW_UI_TOKEN_HTTPONLY": ("false", "true"),
 }
 TOKEN_COUNT_RE = re.compile(r"^[0-9]{1,7}$")
 
@@ -374,6 +386,8 @@ def reserved_env(key: str) -> bool:
 
 def guard_env_error(key: str, value: str) -> str | None:
     allowed = GUARD_ENV[key]
+    if isinstance(allowed, re.Pattern):
+        return None if allowed.fullmatch(value) else "must be a number of MB, 0 (off) to 9999, e.g. 64"
     if allowed is None:
         return None if TOKEN_COUNT_RE.fullmatch(value) else "must be a whole number of tokens (0 to 9999999)"
     return None if value in allowed else "must be one of " + ", ".join(allowed)
@@ -525,6 +539,24 @@ def litellm_env(opts: dict) -> dict[str, str]:
                 "WOOW_CHATGPT_ENABLED": "true",
                 "WOOW_CHATGPT_DEFAULT_MODELS": "visible",
                 "WOOW_PROXY_PORT": "4000",
+                # Woow plugin 0.3.13 modules, written out so a later plugin default change cannot
+                # silently change the add-on. Values = the PaaS chart's defaults: lift a reasoning
+                # route's too-small output limit to 512, warn (header + log) when a budgeted key uses a
+                # model without a price, forward the upstream Retry-After / x-should-retry, answer an
+                # upstream timeout 504.
+                "WOOW_REASONING_MIN_OUTPUT_MODE": "raise",
+                "WOOW_REASONING_MIN_OUTPUT_TOKENS": "512",
+                "WOOW_UNPRICED_MODEL_MODE": "warn",
+                "WOOW_FORWARD_RETRY_AFTER": "true",
+                "WOOW_UPSTREAM_TIMEOUT_STATUS": "504",
+                # Request body cap: the Ingress already stops bodies over 64m (nginx client_max_body_size),
+                # the same cap now also covers port 4000 (the plugin's default of 32 would cut Ingress
+                # uploads between 32 and 64 MB).
+                "WOOW_MAX_REQUEST_SIZE_MB": "64",
+                # Dashboard cookie hardening forces Secure on the session cookie: a browser drops it on
+                # plain http (Home Assistant on the LAN, port 4000 without a tunnel), so the sign-in would
+                # loop. Off here (LiteLLM's own cookie is Secure only on https); true is an operator choice.
+                "WOOW_UI_TOKEN_HTTPONLY": "false",
             }
         )
     for item in opts["env_vars"]:

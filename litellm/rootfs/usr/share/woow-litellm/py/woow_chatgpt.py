@@ -78,6 +78,7 @@ PATCH_TARGET = "litellm.llms.chatgpt.authenticator"
 CHAT_TARGET = "litellm.llms.chatgpt.chat.transformation"
 RESPONSES_TARGET = "litellm.llms.chatgpt.responses.transformation"
 PROXY_UTILS_TARGET = "litellm.proxy.utils"
+REQUEST_PROCESSING_TARGET = "litellm.proxy.common_request_processing"
 PROXY_TARGET = "litellm.proxy.proxy_server"
 # The account's model list is the one the Codex CLI reads (codex-rs models manager); the
 # backend wants a client_version and answers with the models this plan may use.
@@ -798,11 +799,103 @@ def _patch_proxy_logging(module) -> None:
             import woow_chatgpt_plugin
 
             woow_chatgpt_plugin.check_request(user, data)
+            reasoning = _reasoning_module()
+            if reasoning is not None:
+                reasoning.pre_call(data)
+            unpriced = _unpriced_module()
+            if unpriced is not None:
+                unpriced.pre_call(user, data)
         return await original(self, *args, **kwargs)
 
     pre_call_hook._woow_account_guard = True
     pre_call_hook.__wrapped__ = original
     cls.pre_call_hook = pre_call_hook
+    _patch_reasoning_floor(cls)
+
+
+def _reasoning_module():
+    """woow_reasoning (AI-FIX-LLM-2), or None: the module is optional — a missing file (an older
+    HA add-on bundle) or an import error only leaves requests as they were."""
+    try:
+        import woow_reasoning
+    except Exception as exc:  # noqa: BLE001
+        if not getattr(_reasoning_module, "_logged", False):
+            _reasoning_module._logged = True
+            _log(f"reasoning output floor NOT active: {exc!r}")
+        return None
+    return woow_reasoning
+
+
+def _unpriced_module():
+    """woow_unpriced (AI-FIX-LLM-4), or None: optional like woow_reasoning — a missing file or an
+    import error only leaves requests as they were."""
+    try:
+        import woow_unpriced
+    except Exception as exc:  # noqa: BLE001
+        if not getattr(_unpriced_module, "_logged", False):
+            _unpriced_module._logged = True
+            _log(f"unpriced-model budget warning NOT active: {exc!r}")
+        return None
+    return woow_unpriced
+
+
+def _patch_reasoning_floor(cls) -> None:
+    """Explain a raised output limit / an empty `length` reply / a model without a price on the
+    response (the request side runs inside the pre-call wrapper above, after the account guard)."""
+    post = getattr(cls, "post_call_success_hook", None)
+    if post is None or getattr(post, "_woow_reasoning_floor", False):
+        return
+
+    async def post_call_success_hook(self, *args, **kwargs):
+        out = await post(self, *args, **kwargs)
+        reasoning = _reasoning_module()
+        if reasoning is not None:
+            reasoning.post_call(out if out is not None else kwargs.get("response"))
+        unpriced = _unpriced_module()
+        if unpriced is not None:
+            unpriced.post_call(out if out is not None else kwargs.get("response"))
+        return out
+
+    post_call_success_hook._woow_reasoning_floor = True
+    post_call_success_hook.__wrapped__ = post
+    cls.post_call_success_hook = post_call_success_hook
+
+
+def _upstream_errors_module():
+    """woow_upstream_errors (AUDITFIX litellm-retry-timeout), or None: optional like woow_reasoning —
+    a missing file or an import error only leaves error answers as they were."""
+    try:
+        import woow_upstream_errors
+    except Exception as exc:  # noqa: BLE001
+        if not getattr(_upstream_errors_module, "_logged", False):
+            _upstream_errors_module._logged = True
+            _log(f"upstream retry-after / timeout answers NOT adjusted: {exc!r}")
+        return None
+    return woow_upstream_errors
+
+
+def _patch_request_processing(module) -> None:
+    """Upstream retry hints and timeouts: woow_upstream_errors fixes up the answer that
+    ProxyBaseLLMRequestProcessing._handle_llm_api_exception raises for a failed request
+    (forwards Retry-After / x-should-retry under their own names; an upstream timeout is 504)."""
+    cls = getattr(module, "ProxyBaseLLMRequestProcessing", None)
+    original = getattr(cls, "_handle_llm_api_exception", None)
+    if original is None or getattr(original, "_woow_upstream_errors", False):
+        return
+
+    async def _handle_llm_api_exception(self, *args, **kwargs):
+        cause = kwargs["e"] if "e" in kwargs else (args[0] if args else None)
+        try:
+            return await original(self, *args, **kwargs)
+        except Exception as answer:
+            upstream_errors = _upstream_errors_module()
+            if upstream_errors is not None:
+                upstream_errors.adjust(answer, cause)
+            raise
+
+    _handle_llm_api_exception._woow_upstream_errors = True
+    _handle_llm_api_exception.__wrapped__ = original
+    cls._handle_llm_api_exception = _handle_llm_api_exception
 
 
 def _install_plugin_routes(module) -> None:
@@ -818,6 +911,7 @@ _HOOKS = {
     CHAT_TARGET: _patch_chat,
     RESPONSES_TARGET: _patch_responses,
     PROXY_UTILS_TARGET: _patch_proxy_logging,
+    REQUEST_PROCESSING_TARGET: _patch_request_processing,
     PROXY_TARGET: _install_plugin_routes,
 }
 

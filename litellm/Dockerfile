@@ -118,7 +118,7 @@ RUN python -I /usr/share/woow-litellm/patches/apply_upstream_guard.py
 # group (R11), no new '%' or '/' names (R01); last, after the upstream guard it builds on.
 RUN python -I /usr/share/woow-litellm/patches/apply_m4_batch1.py
 
-ARG BUILD_VERSION=0.1.11
+ARG BUILD_VERSION=0.1.12
 ARG BUILD_REF=unknown
 ARG BUILD_ARCH=amd64
 # CI supplies the actual UTC build time; do not inherit the base image creation date.
@@ -137,7 +137,7 @@ LABEL org.opencontainers.image.title="Woow LiteLLM" \
       io.hass.version=${BUILD_VERSION} \
       io.woowtech.litellm.version=1.104.0 \
       io.woowtech.litellm.digest=sha256:843a35c72a832e9c062b66111b1aa54e6588fb32c3ab400d3e20ea9c5fa656a0 \
-      io.woowtech.woow-plugin.source=0.3.5@4ad95a11d8dad671b342d6cc9454c87a3130e8b6
+      io.woowtech.woow-plugin.source=0.3.13@d4dc96ba7a8e415f4f889f18ece59b7bbee606a4
 
 # start-period 45 min ≥ Supervisor retry 1 + pre-upgrade dump 10 + migration 25 + LiteLLM 5 (§7.6).
 HEALTHCHECK --start-period=45m --start-interval=10s --interval=60s --timeout=10s --retries=3 \

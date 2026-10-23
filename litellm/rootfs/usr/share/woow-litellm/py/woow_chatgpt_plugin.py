@@ -686,7 +686,8 @@ body.embed main{padding:12px 12px 24px}body.embed header{display:none}body.embed
     <ul class="small">
       <li>需要 ChatGPT Plus 或 Pro。</li>
       <li>這是借用 Codex 的登入方式，不是 OpenAI 官方的第三方整合；用量算在該帳號的訂閱，帳號風險自行承擔。</li>
-      <li>一個 ChatGPT 帳號只連一個地方（同一台 LiteLLM 也不要用兩個憑證連同一個帳號）；登入網址與代碼只能自己使用。</li>
+      <li>同一個 ChatGPT 帳號可以同時登入多個 LiteLLM，但每個 LiteLLM 要各自登入，不要把一台的登入檔複製到另一台（同一組 refresh token 只能用一次）；同一台 LiteLLM 內不要用兩個憑證連同一個帳號。訂閱額度由所有使用該帳號的地方共用。</li>
+      <li>登入網址與代碼只能自己使用。</li>
     </ul>
     <label class="row small"><input type="checkbox" id="agree"> 我了解並同意</label>
     <p class="small" style="margin:12px 0 6px">選擇登入方式：</p>
@@ -1301,7 +1302,7 @@ function showMethods(dialog,sub){
   var account=sub.dataset.account, name=sub.dataset.name;
   sub.innerHTML='<h3>連結 ChatGPT 帳號：'+txt(name)+'</h3>'+
     '<div class="woow-cg-status-line woow-cg-muted"></div>'+
-    '<ul class="woow-cg-muted"><li>需要 ChatGPT Plus 或 Pro。</li><li>這是借用 Codex 的登入方式，不是 OpenAI 官方的第三方整合；用量算在該帳號的訂閱，帳號風險自行承擔。</li><li>一個 ChatGPT 帳號只連一個憑證；登入網址與代碼只能自己使用。</li></ul>'+
+    '<ul class="woow-cg-muted"><li>需要 ChatGPT Plus 或 Pro。</li><li>這是借用 Codex 的登入方式，不是 OpenAI 官方的第三方整合；用量算在該帳號的訂閱，帳號風險自行承擔。</li><li>同一個 ChatGPT 帳號可以同時登入多個 LiteLLM，但每個 LiteLLM 要各自登入，不要把一台的登入檔複製到另一台（同一組 refresh token 只能用一次）；同一台 LiteLLM 內不要用兩個憑證連同一個帳號。訂閱額度由所有使用該帳號的地方共用。</li><li>登入網址與代碼只能自己使用。</li></ul>'+
     '<label class="woow-cg-row" style="margin-top:4px"><input type="checkbox" class="woow-cg-agree"> 我了解並同意</label>'+
     '<p style="margin:12px 0 0"><b>選擇登入方式</b></p>'+
     '<button type="button" class="woow-cg-method woow-cg-m-browser" disabled><b>瀏覽器登入（建議）</b><span class="woow-cg-muted">在新分頁登入 ChatGPT，再把跳轉後的網址貼回來。不用改 ChatGPT 設定。</span></button>'+

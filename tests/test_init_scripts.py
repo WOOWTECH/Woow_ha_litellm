@@ -34,7 +34,17 @@ LITELLM_ONLY = {
     "LITELLM_EXPIRED_UI_SESSION_KEY_CLEANUP_ENABLED", "LITELLM_EXPIRED_UI_SESSION_KEY_CLEANUP_INTERVAL_SECONDS",
     "FORWARDED_ALLOW_IPS", "ROOT_REDIRECT_URL", "NO_DOCS", "NO_REDOC", "NO_OPENAPI",
 }
-PLUGIN = {"PYTHONPATH", "CHATGPT_TOKEN_DIR", "WOOW_CHATGPT_ENABLED", "WOOW_CHATGPT_DEFAULT_MODELS", "WOOW_PROXY_PORT"}
+PLUGIN = {
+    "PYTHONPATH", "CHATGPT_TOKEN_DIR", "WOOW_CHATGPT_ENABLED", "WOOW_CHATGPT_DEFAULT_MODELS", "WOOW_PROXY_PORT",
+    "WOOW_REASONING_MIN_OUTPUT_MODE", "WOOW_REASONING_MIN_OUTPUT_TOKENS", "WOOW_UNPRICED_MODEL_MODE",
+    "WOOW_FORWARD_RETRY_AFTER", "WOOW_UPSTREAM_TIMEOUT_STATUS", "WOOW_MAX_REQUEST_SIZE_MB", "WOOW_UI_TOKEN_HTTPONLY",
+}
+# What the add-on writes for the plugin 0.3.13 modules (the PaaS chart's defaults, except the two HA decisions).
+PLUGIN_0313_DEFAULTS = {
+    "WOOW_REASONING_MIN_OUTPUT_MODE": "raise", "WOOW_REASONING_MIN_OUTPUT_TOKENS": "512",
+    "WOOW_UNPRICED_MODEL_MODE": "warn", "WOOW_FORWARD_RETRY_AFTER": "true", "WOOW_UPSTREAM_TIMEOUT_STATUS": "504",
+    "WOOW_MAX_REQUEST_SIZE_MB": "64", "WOOW_UI_TOKEN_HTTPONLY": "false",
+}
 
 
 def mode(path) -> int:
@@ -135,6 +145,7 @@ def test_first_boot_local_mode_env_complete(box):
     assert "DISABLE_SCHEMA_UPDATE" not in mig
     assert lit["CHATGPT_TOKEN_DIR"] == "/run/woow-chatgpt"
     assert lit["PYTHONPATH"] == "/usr/share/woow-litellm/py"
+    assert {k: lit[k] for k in PLUGIN_0313_DEFAULTS} == PLUGIN_0313_DEFAULTS
     assert lit["LITELLM_UI_SESSION_DURATION"] == "4h"
     assert lit["LITELLM_EXPIRED_UI_SESSION_KEY_CLEANUP_INTERVAL_SECONDS"] == "3600"
     assert lit["DATABASE_URL"] == f"postgresql://litellm:{box.secret('pg_password')}@127.0.0.1:5432/litellm"
@@ -265,6 +276,10 @@ GUARD_SWITCHES = {
     "WOOW_PROVIDER_HEADERS": "all", "WOOW_TOKEN_LIMIT_VALIDATION": "off", "WOOW_BUDGET_ADMISSION": "resize",
     "WOOW_BUDGET_UNPRICED": "block_budgeted_keys", "WOOW_BUDGET_REASONING_RESERVE_TOKENS": "4096",
     "WOOW_BUDGET_MIN_INPUT_TOKENS": "0", "WOOW_PROVIDER_ERROR_LOG": "off",
+    # Woow plugin 0.3.13 rollback switches (each differs from the add-on default written above).
+    "WOOW_REASONING_MIN_OUTPUT_MODE": "off", "WOOW_REASONING_MIN_OUTPUT_TOKENS": "2048",
+    "WOOW_UNPRICED_MODEL_MODE": "reject", "WOOW_FORWARD_RETRY_AFTER": "false", "WOOW_UPSTREAM_TIMEOUT_STATUS": "408",
+    "WOOW_MAX_REQUEST_SIZE_MB": "0.5", "WOOW_UI_TOKEN_HTTPONLY": "true",
 }
 
 
@@ -291,13 +306,17 @@ def test_upstream_guard_switches_are_the_only_settable_woow_env(box):
         ("WOOW_BUDGET_REASONING_RESERVE_TOKENS", "-1"), ("WOOW_BUDGET_MIN_INPUT_TOKENS", "lots"),
         ("WOOW_BUDGET_REASONING_RESERVE_TOKENS", "10000000"),
         ("WOOW_PROVIDER_ERROR_LOG", "verbose"), ("WOOW_PROVIDER_ERROR_LOG", "Raw"),
+        ("WOOW_REASONING_MIN_OUTPUT_MODE", "reject!"), ("WOOW_REASONING_MIN_OUTPUT_TOKENS", "-5"),
+        ("WOOW_UNPRICED_MODEL_MODE", "false"), ("WOOW_FORWARD_RETRY_AFTER", "yes"),
+        ("WOOW_UPSTREAM_TIMEOUT_STATUS", "500"), ("WOOW_MAX_REQUEST_SIZE_MB", "-1"),
+        ("WOOW_MAX_REQUEST_SIZE_MB", "big"), ("WOOW_MAX_REQUEST_SIZE_MB", "1e3"), ("WOOW_UI_TOKEN_HTTPONLY", "on"),
     ],
 )
 def test_upstream_guard_switch_values_checked(box, key, value):
     box.options(DEFAULT_OPTIONS, env_vars=[{"key": key, "value": value}])
     res = box.run("env")
     assert res.returncode == 1 and key in res.stderr
-    assert "must be one of" in res.stderr or "whole number of tokens" in res.stderr
+    assert "must be one of" in res.stderr or "whole number of tokens" in res.stderr or "number of MB" in res.stderr
 
 
 @pytest.mark.parametrize(

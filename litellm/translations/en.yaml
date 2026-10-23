@@ -43,8 +43,8 @@ configuration:
     description: >-
       Let LiteLLM use the allowance of ChatGPT Plus / Pro subscriptions (the same feature as on WOOW
       PaaS). Turning it off does not delete connected accounts; disconnect them on the ChatGPT
-      subscription page first. Use one ChatGPT account in one place (PaaS or here); long-term independent
-      sign-ins are not verified. Never clone a backup to another active host: it shares rotating tokens.
+      subscription page first. The same ChatGPT account may be signed in to several LiteLLMs (PaaS included), but
+      each LiteLLM must sign in on its own; do not copy sign-in files. Never restore a backup or dump onto another active host: it shares rotating tokens.
   api_docs:
     name: API docs
     description: >-
