@@ -262,6 +262,9 @@ class ChatGPTUpstream:
         policy = tmp_path / 'chatgpt-subscription'
         policy.write_bytes(b'enabled\n')
         monkeypatch.setattr(woow_subscription_policy, 'POLICY_PATH', policy)
+        # LiteLLM's ChatGPT Authenticator creates its token directory when the provider config is built; the
+        # image's HOME is read-only, so point it at a scratch directory (nothing is read or written there).
+        monkeypatch.setenv('CHATGPT_TOKEN_DIR', str(tmp_path / 'chatgpt-tokens'))
         monkeypatch.syspath_prepend(plugin_dir())
         import woow_chatgpt as core
         for name in SWITCHES:
