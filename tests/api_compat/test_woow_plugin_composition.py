@@ -36,8 +36,12 @@ SWITCHES = (*ADDON_ENV, 'WOOW_BUDGET_UNPRICED', 'WOOW_BUDGET_ADMISSION', 'WOOW_R
 
 
 def plugin_dir():
-    for candidate in (os.environ.get('WOOW_PLUGIN_DIR'), '/usr/share/woow-litellm/py',
-                      str(Path(__file__).resolve().parents[2] / 'litellm/rootfs/usr/share/woow-litellm/py')):
+    """The plugin copy of the image under test (/usr/share/...); in a source checkout, the repo's copy."""
+    candidates = [os.environ.get('WOOW_PLUGIN_DIR'), '/usr/share/woow-litellm/py']
+    here = Path(__file__).resolve()
+    if len(here.parents) > 2:  # the image run mounts this file at /contracts: no checkout around it
+        candidates.append(str(here.parents[2] / 'litellm/rootfs/usr/share/woow-litellm/py'))
+    for candidate in candidates:
         if candidate and (Path(candidate) / 'woow_chatgpt.py').is_file():
             return candidate
     raise RuntimeError('plugin copy not found')
