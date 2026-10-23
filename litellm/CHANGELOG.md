@@ -4,10 +4,12 @@
 
 2026-10-24
 
-Woow 外掛同步到 PaaS chart 0.3.13（woow-paas-charts `d4dc96b`，逐位元複製）。HA 只帶入適用的部分；外掛頁面的 ChatGPT 帳號說明改為與 PaaS 一致。
+Woow 外掛同步到 PaaS chart 0.3.14（woow-paas-charts `d3cd689`，逐位元組複製）。HA 只帶入適用的部分；外掛頁面的 ChatGPT 帳號說明改為與 PaaS 一致，並補上手機版排版與週額度用完的冷卻。
 
 ### 修正
 
+- ChatGPT 週額度用完的 429（`usage_limit_reached`，通常數小時到數天才重置，上游不帶 `Retry-After`）：外掛補上 `Retry-After`（重置秒數，至少 61 秒、最多 900 秒），路由器據此把該帳號冷卻**最長 15 分鐘**，而不是 LiteLLM 預設的 5 秒——原本每 6–9 秒就會再打一次已用完的帳號。同一個 `Retry-After` 也會以標準標頭回給呼叫端（只是一個秒數）。上游自己帶 `Retry-After` 時不覆蓋；其他 429 與其他狀態碼不動。冷卻存在記憶體，重新啟動 add-on 會清掉（每個用完的帳號探測一次）；額度若提早恢復（升級方案、補額度），最晚晚一個上限的時間才會再被用到。同一個模型群組只有一個帳號時，LiteLLM 本來就不冷卻，不受影響。退回開關見下方 `WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS`。
+- 手機版排版（外掛 #179，與 PaaS 相同）：LiteLLM 後台的 Models → LLM Credentials 在窄螢幕（寬度 767px 以下，以後台 iframe 的寬度為準）不再擠在一起——標題與說明換行、憑證表格可橫向捲動、側邊欄展開時改為覆蓋在內容上。只加 CSS 與版面標記，不改登入或 API。
 - ChatGPT 訂閱頁與說明文字：同一個 ChatGPT 帳號**可以同時登入多個 LiteLLM**（2026-10-23 實測 HA add-on 與 PaaS 共存，兩邊各自換發 token 後仍可用），取代舊的「建議只連一個地方」。每個 LiteLLM 必須各自完成登入，不要複製或共用登入檔（refresh token 會輪替且只能用一次）；同一台內不要用兩個憑證連同一個帳號；訂閱額度由所有使用該帳號的地方共用。**不可把備份或 dump 還原到第二台並同時使用**這一點不變。
 - 推論模型的輸出上限太小時不再回空內容：請求打到推論模型（`model_info.supports_reasoning`、o 系列、gpt-5 以上、DeepSeek R1、`:thinking` 等）且 `max_tokens`／`max_completion_tokens`／`max_output_tokens` 小於 512 時，自動提高到 512（只是上限，提早結束的回覆費用不變），回應帶 `x-woow-max-tokens-raised: 16->512`；仍因隱藏推理用完上限而空回覆時帶 `x-woow-warning: reasoning_exhausted_max_tokens`。請求自己關閉推理（`reasoning_effort: none`、`reasoning.enabled: false`）或帶 `thinking` 時不動。
 - 上游錯誤的重試資訊：上游回 408／409／429／5xx 時，把上游的 `Retry-After`、`retry-after-ms`、`x-should-retry`（只轉有效值，閘道自己設的不覆蓋）以標準名稱轉給呼叫端，OpenAI／Anthropic SDK 就能照上游的等待時間重試；上游逾時改回 **504**（`error.type: timeout`），不再是看起來像「呼叫端太慢」的 408。
@@ -17,8 +19,8 @@ Woow 外掛同步到 PaaS chart 0.3.13（woow-paas-charts `d4dc96b`，逐位元�
 
 ### 新增
 
-- 退回開關（附加元件設定的 `env_vars`，不需重建映像；值會檢查）：`WOOW_REASONING_MIN_OUTPUT_MODE`（`raise`／`reject`／`off`）、`WOOW_REASONING_MIN_OUTPUT_TOKENS`（整數，0＝關閉）、`WOOW_UNPRICED_MODEL_MODE`（`warn`／`reject`／`off`）、`WOOW_FORWARD_RETRY_AFTER`（`true`／`false`）、`WOOW_UPSTREAM_TIMEOUT_STATUS`（`504`／`408`）、`WOOW_MAX_REQUEST_SIZE_MB`（MB，可含小數，0＝不限制）、`WOOW_UI_TOKEN_HTTPONLY`（`true`／`false`）。預設值寫在 add-on 啟動環境，與 PaaS chart 的預設相同（除了上面兩項 HA 的決定）。這些行為與 ChatGPT 訂閱一樣由外掛載入，關掉 `chatgpt_subscription` 時一併不載入。
-- 同步腳本與檢查腳本涵蓋外掛的全部 8 個檔案（`woow_revoke_ui_sessions.py` 是 PaaS 專用，add-on 有自己的 `woow-revoke-ui-sessions`，不同步）。
+- 退回開關（附加元件設定的 `env_vars`，不需重建映像；值會檢查）：`WOOW_REASONING_MIN_OUTPUT_MODE`（`raise`／`reject`／`off`）、`WOOW_REASONING_MIN_OUTPUT_TOKENS`（整數，0＝關閉）、`WOOW_UNPRICED_MODEL_MODE`（`warn`／`reject`／`off`）、`WOOW_FORWARD_RETRY_AFTER`（`true`／`false`）、`WOOW_UPSTREAM_TIMEOUT_STATUS`（`504`／`408`）、`WOOW_MAX_REQUEST_SIZE_MB`（MB，可含小數，0＝不限制）、`WOOW_UI_TOKEN_HTTPONLY`（`true`／`false`）、`WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS`（秒數，0 到 86400，0＝關閉；預設 900）。預設值寫在 add-on 啟動環境，與 PaaS chart 的預設相同（除了上面兩項 HA 的決定）。這些行為與 ChatGPT 訂閱一樣由外掛載入，關掉 `chatgpt_subscription` 時一併不載入。
+- 同步腳本與檢查腳本涵蓋外掛的全部 9 個檔案（含新的 `woow_usage_limit.py`）（`woow_revoke_ui_sessions.py` 是 PaaS 專用，add-on 有自己的 `woow-revoke-ui-sessions`，不同步）。
 
 ## 0.1.11
 

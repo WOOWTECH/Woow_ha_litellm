@@ -17,7 +17,7 @@ HA_DECISIONS = {"WOOW_MAX_REQUEST_SIZE_MB": "64", "WOOW_UI_TOKEN_HTTPONLY": "fal
 ENV_NAMES = (
     "WOOW_REASONING_MIN_OUTPUT_MODE", "WOOW_REASONING_MIN_OUTPUT_TOKENS", "WOOW_REASONING_MODEL_PATTERNS",
     "WOOW_UNPRICED_MODEL_MODE", "WOOW_FORWARD_RETRY_AFTER", "WOOW_UPSTREAM_TIMEOUT_STATUS",
-    "WOOW_MAX_REQUEST_SIZE_MB", "WOOW_UI_TOKEN_HTTPONLY",
+    "WOOW_MAX_REQUEST_SIZE_MB", "WOOW_UI_TOKEN_HTTPONLY", "WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS",
 )
 
 
@@ -52,6 +52,37 @@ def test_written_values_equal_the_plugin_defaults(box, clean_env):
     assert unpriced.mode() == env["WOOW_UNPRICED_MODEL_MODE"]
     assert upstream.forward_enabled() is (env["WOOW_FORWARD_RETRY_AFTER"] == "true")
     assert upstream.timeout_status() == int(env["WOOW_UPSTREAM_TIMEOUT_STATUS"])
+
+
+def test_usage_limit_cooldown_is_the_paas_default_and_the_plugin_reads_it(box, clean_env, monkeypatch):
+    """0.3.14: unset -> the plugin's own default is 900 s, the add-on writes the same 900 (= the PaaS chart)."""
+    env = addon_env(box)
+    module = load("woow_usage_limit")
+    assert module.DEFAULT_MAX_SECONDS == 900 and module.max_seconds() == 900  # nothing set: the default
+    assert env["WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS"] == "900"
+    monkeypatch.setenv(module.MAX_ENV, env["WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS"])
+    assert module.max_seconds() == 900
+    assert module.MAX_ENV == "WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS"
+
+
+@pytest.mark.parametrize("value,seconds", [("0", 0), ("61", 61), ("1800", 1800), ("86400", 86400)])
+def test_usage_limit_switch_values_the_module_reads(box, clean_env, monkeypatch, value, seconds):
+    box.options(DEFAULT_OPTIONS, env_vars=[{"key": "WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS", "value": value}])
+    assert addon_env(box)["WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS"] == value
+    module = load("woow_usage_limit")
+    monkeypatch.setenv(module.MAX_ENV, value)
+    assert module.max_seconds() == seconds
+
+
+def test_the_addon_sets_no_router_settings_so_the_cooldown_header_decides(box):
+    """The 0.3.14 cooldown works through LiteLLM's own Router defaults: a 429 cools a deployment down at
+    once when no allowed_fails / allowed_fails_policy / cooldown_time is configured, and the Retry-After
+    header then sets how long. The add-on's config must therefore not set any of them (the real Router
+    behaviour is pinned in tests/api_compat/test_woow_plugin_composition.py)."""
+    box.boot()
+    text = (box.run_dir / "litellm" / "config.yaml").read_text()
+    for name in ("router_settings", "allowed_fails", "cooldown_time", "num_retries", "disable_cooldowns", "retry_policy"):
+        assert name not in text, name
 
 
 def test_ha_decisions_differ_from_the_plugin_defaults_on_purpose(box, clean_env):

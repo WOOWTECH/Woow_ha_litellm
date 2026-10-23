@@ -18,7 +18,7 @@ lock="$repo/litellm/woow-plugin.lock.json"
 src_path="charts/litellm/files"
 # Every file the add-on uses. woow_revoke_ui_sessions.py (PaaS dashboard-session revocation) is
 # deliberately NOT synced: the add-on has its own woow-revoke-ui-sessions step in the s6 startup.
-files="sitecustomize.py woow_body_limit.py woow_chatgpt.py woow_chatgpt_plugin.py woow_reasoning.py woow_ui_cookie_hardening.py woow_unpriced.py woow_upstream_errors.py"
+files="sitecustomize.py woow_body_limit.py woow_chatgpt.py woow_chatgpt_plugin.py woow_reasoning.py woow_ui_cookie_hardening.py woow_unpriced.py woow_upstream_errors.py woow_usage_limit.py"
 
 full="$(git -C "$charts" rev-parse --verify "$commit^{commit}")"
 chart_version="$(git -C "$charts" show "$full:charts/litellm/Chart.yaml" | sed -n 's/^version:[[:space:]]*//p' | head -n1)"

@@ -30,7 +30,9 @@ Roles:
    * ``ChatGPTConfig`` / ``ChatGPTResponsesAPIConfig``: the token and ChatGPT-Account-Id come
      from the account the request names (the credential's reference), not one global file;
      no token is fetched while LiteLLM merely builds a deployment, so models can be added before
-     their account is signed in;
+     their account is signed in; a 429 usage_limit_reached (weekly quota used up) without a
+     Retry-After gets one (woow_usage_limit, chart 0.3.14) so the router keeps that account out
+     of the rotation for minutes instead of 5 s;
    and puts the /woow/chatgpt page (woow_chatgpt_plugin.py) on the proxy app.
 2. ``remote_models`` / ``register_model_costs``: an account's model list straight from ChatGPT,
    and LiteLLM taught the ones its bundled model map does not know yet.
@@ -729,6 +731,37 @@ def _auth_error(model, exc):
     return AuthenticationError(model=model, llm_provider="chatgpt", message=str(getattr(exc, "message", None) or exc))
 
 
+def _usage_limit_module():
+    """woow_usage_limit (chart 0.3.14), or None: optional like woow_upstream_errors — a missing
+    file or an import error only leaves a 429's headers as the backend sent them."""
+    try:
+        import woow_usage_limit
+    except Exception as exc:  # noqa: BLE001
+        if not getattr(_usage_limit_module, "_logged", False):
+            _usage_limit_module._logged = True
+            _log(f"exhausted-quota 429 gets no cooldown hint: {exc!r}")
+        return None
+    return woow_usage_limit
+
+
+def _patch_error_class(cls) -> None:
+    """An exhausted weekly quota (429 usage_limit_reached, no Retry-After) keeps its deployment out
+    of the router's rotation for a while instead of the default 5 s (see woow_usage_limit)."""
+    original = cls.get_error_class
+    if getattr(original, "_woow_usage_limit", False):
+        return
+
+    def get_error_class(self, error_message, status_code, headers):
+        module = _usage_limit_module()
+        if module is not None:
+            headers = module.with_cooldown_hint(status_code, error_message, headers)
+        return original(self, error_message, status_code, headers)
+
+    get_error_class._woow_usage_limit = True
+    get_error_class.__wrapped__ = original
+    cls.get_error_class = get_error_class
+
+
 def _patch_chat(module) -> None:
     cls = module.ChatGPTConfig
     if getattr(cls, "_woow_patched", False):
@@ -756,6 +789,7 @@ def _patch_chat(module) -> None:
 
     cls._get_openai_compatible_provider_info = _get_openai_compatible_provider_info
     cls.validate_environment = validate_environment
+    _patch_error_class(cls)
     cls._woow_patched = True
 
 
@@ -778,6 +812,7 @@ def _patch_responses(module) -> None:
         return {**get_chatgpt_default_headers(token, account_id, session_id), **headers}
 
     cls.validate_environment = validate_environment
+    _patch_error_class(cls)
     cls._woow_patched = True
 
 

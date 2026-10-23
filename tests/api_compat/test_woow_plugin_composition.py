@@ -1,4 +1,4 @@
-"""The shared Woow plugin (0.3.13) on top of the add-on's patched LiteLLM: nothing is applied twice and
+"""The shared Woow plugin (0.3.14) on top of the add-on's patched LiteLLM: nothing is applied twice and
 nothing is lost. The plugin hooks wrap the same seams the build patches change (ProxyLogging hooks, the
 request-processing error handler); these contracts run the REAL chain -- API errors, upstream guard and
 M4 batch 1 installed in the image, plus the synced plugin files wrapped around them -- on the proxy app,
@@ -32,6 +32,7 @@ ADDON_ENV = {
     'WOOW_REASONING_MIN_OUTPUT_MODE': 'raise', 'WOOW_REASONING_MIN_OUTPUT_TOKENS': '512',
     'WOOW_UNPRICED_MODEL_MODE': 'warn', 'WOOW_FORWARD_RETRY_AFTER': 'true', 'WOOW_UPSTREAM_TIMEOUT_STATUS': '504',
 }
+ADDON_USAGE = '900'  # WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS as the add-on writes it
 SWITCHES = (*ADDON_ENV, 'WOOW_BUDGET_UNPRICED', 'WOOW_BUDGET_ADMISSION', 'WOOW_REASONING_MODEL_PATTERNS')
 
 
@@ -229,3 +230,179 @@ def test_unpriced_reject_mode_of_the_plugin(gateway, monkeypatch):
     result = gateway.call('unpriced', token=BUDGET)
     assert result.status_code == 400 and result.json()['error']['param'] == 'model'
     assert gateway.call('unpriced').status_code == 200
+
+
+# ── 0.3.14: an exhausted ChatGPT quota keeps its account out of the rotation (HA router defaults) ──────────
+# The add-on's config sets no router_settings (tests/test_woow_plugin_ha_env.py pins that), so the proxy
+# builds LiteLLM's Router with its own defaults: num_retries 2, no allowed_fails, cooldown_time 5 s. A 429
+# cools the deployment down at once in a group with alternatives; the Retry-After header sets how long.
+USAGE_ENV = 'WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS'
+WEEKLY = json.dumps({'error': {'type': 'usage_limit_reached', 'message': 'The usage limit has been reached',
+                               'plan_type': 'pro', 'resets_at': 1893456000, 'limit_window_minutes': 10080,
+                               'resets_in_seconds': 259200}})
+
+
+def _synthetic_jwt(core, label):
+    import base64
+    claims = {'exp': 4102444800, core.AUTH_CLAIM: {'chatgpt_account_id': label}}
+    return 'synthetic.' + base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip('=') + '.unsigned'
+
+
+class ChatGPTUpstream:
+    """The ChatGPT backend at the http boundary: account a is out of quota, account b is reached."""
+
+    def __init__(self, monkeypatch, tmp_path, env=None, headers=None, text=WEEKLY, status=429):
+        import types
+        from litellm.llms.chatgpt.chat.transformation import ChatGPTConfig
+        from litellm.llms.chatgpt.responses.transformation import ChatGPTResponsesAPIConfig
+        from litellm.llms.custom_httpx import http_handler
+
+        # The build's runtime policy (init-woow-env writes it): subscription deployments load only when enabled.
+        from litellm import woow_subscription_policy
+        policy = tmp_path / 'chatgpt-subscription'
+        policy.write_bytes(b'enabled\n')
+        monkeypatch.setattr(woow_subscription_policy, 'POLICY_PATH', policy)
+        monkeypatch.syspath_prepend(plugin_dir())
+        import woow_chatgpt as core
+        for name in SWITCHES:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(USAGE_ENV, raising=False)
+        for name, value in (env or {}).items():
+            monkeypatch.setenv(name, value)
+        # The provider seams exactly as the plugin's import hook installs them; restored after the test.
+        for cls, names in ((ChatGPTConfig, ('_get_openai_compatible_provider_info', 'validate_environment', 'get_error_class')),
+                           (ChatGPTResponsesAPIConfig, ('validate_environment', 'get_error_class'))):
+            for name in names:
+                monkeypatch.setattr(cls, name, getattr(cls, name))
+            monkeypatch.setattr(cls, '_woow_patched', False, raising=False)
+        core._patch_chat(types.SimpleNamespace(ChatGPTConfig=ChatGPTConfig))
+        core._patch_responses(types.SimpleNamespace(ChatGPTResponsesAPIConfig=ChatGPTResponsesAPIConfig))
+        monkeypatch.setattr(litellm, 'credential_list', [])
+        monkeypatch.setattr(core, 'authenticator', lambda account: types.SimpleNamespace(
+            get_access_token=lambda: _synthetic_jwt(core, 'acct-' + account), get_account_id=lambda: 'acct-' + account))
+
+        self.seen = []
+        self.sleeps = []
+        self.reached = 'synthetic: the healthy account was reached'
+        exhausted = ('a',)
+
+        async def boundary(handler, url, *args, **kwargs):
+            sent = {k.lower(): v for k, v in (kwargs.get('headers') or {}).items()}
+            account = (sent.get('chatgpt-account-id') or '').replace('acct-', '')
+            self.seen.append(account)
+            if account in exhausted:
+                request = httpx.Request('POST', url)
+                raise httpx.HTTPStatusError('upstream error', request=request,
+                                            response=httpx.Response(status, text=text, headers=headers or {}, request=request))
+            raise RuntimeError(self.reached)
+
+        monkeypatch.setattr(http_handler.AsyncHTTPHandler, 'post', boundary)
+        real_sleep = asyncio.sleep
+
+        async def fast_sleep(delay, *args, **kwargs):
+            self.sleeps.append(delay)
+            return await real_sleep(0)
+        monkeypatch.setattr(asyncio, 'sleep', fast_sleep)
+        # Every Router adds its cooldown/usage callbacks to LiteLLM's process-wide lists, which stop taking new
+        # entries at 100 (MAX_CALLBACKS): after the hundreds of Routers other contract files build, this Router
+        # would never be told about a failure. Start from empty lists (restored after the test).
+        for name in ('_async_success_callback', 'success_callback', '_async_failure_callback', 'failure_callback'):
+            monkeypatch.setattr(litellm, name, [])
+        # No num_retries / allowed_fails / cooldown_time: what the proxy builds from the add-on's config.
+        self.router = litellm.Router(model_list=[
+            {'model_name': 'pair', 'litellm_params': {'model': 'chatgpt/gpt-5.5', 'api_key': 'woow-chatgpt:a'},
+             'model_info': {'id': 'dep-a', 'mode': 'responses'}},
+            {'model_name': 'pair', 'litellm_params': {'model': 'chatgpt/gpt-5.5', 'api_key': 'woow-chatgpt:b'},
+             'model_info': {'id': 'dep-b', 'mode': 'responses'}},
+            {'model_name': 'solo', 'litellm_params': {'model': 'chatgpt/gpt-5.5', 'api_key': 'woow-chatgpt:a'},
+             'model_info': {'id': 'dep-solo', 'mode': 'responses'}},
+        ])
+
+    def call(self, model='pair'):
+        async def run():
+            try:
+                await self.router.acompletion(model=model, messages=[{'role': 'user', 'content': 'synthetic'}])
+            except Exception as exc:  # noqa: BLE001
+                return exc
+        return asyncio.run(run())
+
+    def until_a_was_picked(self):
+        """Call the pair (simple-shuffle) until a request reached the exhausted account (first pick or on a
+        retry); returns where that request's upstream calls start in `seen`, and its final failure."""
+        for _ in range(40):
+            before = len(self.seen)
+            failure = self.call()
+            if 'a' in self.seen[before:]:
+                return before, failure
+        raise AssertionError(f'account a was never picked: seen={self.seen}')
+
+    def cooldown(self, *ids):
+        return self.router.cooldown_cache.get_min_cooldown(list(ids), None)
+
+    def active(self, *ids):
+        return asyncio.run(self.router.cooldown_cache.async_get_active_cooldowns(list(ids), None))
+
+
+def test_ha_router_runs_on_litellm_defaults(monkeypatch, tmp_path):
+    """The assumptions the mechanism rests on; a LiteLLM bump or an added router setting fails here."""
+    from litellm.router_utils.cooldown_handlers import _is_allowed_fails_set_on_router
+    up = ChatGPTUpstream(monkeypatch, tmp_path)
+    router = up.router
+    assert router.num_retries == 2 and router.cooldown_time == 5
+    assert router.allowed_fails_policy is None and _is_allowed_fails_set_on_router(litellm_router_instance=router) is False
+    assert not router.disable_cooldowns
+
+
+def test_exhausted_account_is_cooled_for_900_s_and_the_same_request_moves_on(monkeypatch, tmp_path):
+    """With the add-on's own environment (900) and the router defaults: the request that hit the exhausted
+    account is retried on the other one inside the same call (no client-visible 429), and the exhausted
+    account is not probed again while it cools."""
+    up = ChatGPTUpstream(monkeypatch, tmp_path, env={USAGE_ENV: ADDON_USAGE})
+    before, failure = up.until_a_was_picked()
+    mine = up.seen[before:]
+    assert mine.count('a') == 1 and 'b' in mine          # a was tried once, the request ended on the other account
+    assert up.reached in str(failure) and getattr(failure, 'status_code', None) != 429
+    assert up.cooldown('dep-a') == 900 and 'dep-a' in [i for i, _ in up.active('dep-a')]
+    after = len(up.seen)
+    for _ in range(12):
+        up.call()
+    assert 'a' not in up.seen[after:]
+    assert all(delay == 0 for delay in up.sleeps)        # a healthy alternative: no back-off sleep
+
+
+def test_unset_environment_gives_the_same_900(monkeypatch, tmp_path):
+    up = ChatGPTUpstream(monkeypatch, tmp_path)                      # the plugin's own default, nothing written
+    up.until_a_was_picked()
+    assert up.cooldown('dep-a') == 900
+
+
+def test_zero_restores_litellms_5_second_cooldown(monkeypatch, tmp_path):
+    up = ChatGPTUpstream(monkeypatch, tmp_path, env={USAGE_ENV: '0'})
+    up.until_a_was_picked()
+    assert up.cooldown('dep-a') == 5
+
+
+@pytest.mark.parametrize('value,expected', [('120', 120), ('61', 61), ('86400', 86400)])
+def test_env_vars_value_is_the_cap(monkeypatch, tmp_path, value, expected):
+    up = ChatGPTUpstream(monkeypatch, tmp_path, env={USAGE_ENV: value})
+    up.until_a_was_picked()
+    assert up.cooldown('dep-a') == expected
+
+
+def test_an_upstream_retry_after_and_ordinary_rate_limits_are_left_alone(monkeypatch, tmp_path):
+    up = ChatGPTUpstream(monkeypatch, tmp_path, headers={'retry-after': '7'})
+    up.until_a_was_picked()
+    assert up.cooldown('dep-a') == 7
+    ordinary = json.dumps({'error': {'type': 'rate_limit_exceeded', 'resets_in_seconds': 3}})
+    up = ChatGPTUpstream(monkeypatch, tmp_path, text=ordinary)
+    up.until_a_was_picked()
+    assert up.cooldown('dep-a') == 5
+
+
+def test_a_single_account_group_is_never_cooled_and_keeps_litellms_retries(monkeypatch, tmp_path):
+    """LiteLLM's rule, unchanged: no cooldown for the only deployment of a group; the default 2 retries
+    still reach the exhausted account (3 upstream calls) -- the hint changes nothing here."""
+    up = ChatGPTUpstream(monkeypatch, tmp_path)
+    failure = up.call('solo')
+    assert getattr(failure, 'status_code', None) == 429
+    assert up.active('dep-solo') == [] and up.seen == ['a', 'a', 'a']

@@ -45,6 +45,8 @@ configuration:
       PaaS). Turning it off does not delete connected accounts; disconnect them on the ChatGPT
       subscription page first. The same ChatGPT account may be signed in to several LiteLLMs (PaaS included), but
       each LiteLLM must sign in on its own; do not copy sign-in files. Never restore a backup or dump onto another active host: it shares rotating tokens.
+      An account whose weekly quota is used up (429 usage_limit_reached) is kept out of the rotation for up to 15 minutes;
+      env_vars WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS changes it (0 = off).
   api_docs:
     name: API docs
     description: >-

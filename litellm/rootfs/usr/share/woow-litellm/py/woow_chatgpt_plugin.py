@@ -1206,9 +1206,40 @@ css.textContent=[
 "@media (prefers-color-scheme:dark){.woow-cg-sheet{background:#171a21;color:#e6e8eb}}",
 ".woow-cg-sheet header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid rgba(127,127,127,.3);font-weight:600}",
 ".woow-cg-sheet iframe{flex:1;border:0;width:100%}",
-".woow-cg-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483001;background:#111;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;max-width:90vw}"
+".woow-cg-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483001;background:#111;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;max-width:90vw}",
+// LiteLLM 1.104.0: keep the native sidebar toggle/state and table scroll container.
+// The media query uses the dashboard iframe's width, not the outer HA viewport.
+"@media (max-width:767px){",
+".woow-cg-dashboard > [data-slot=sidebar][data-collapsed=false]{position:fixed;inset:0 auto 0 0;z-index:40}",
+".woow-cg-dashboard > [data-slot=sidebar][data-collapsed=false] + div{margin-left:72px}",
+".woow-cg-models-page{padding:8px}",
+".woow-cg-credentials{min-width:0}",
+".woow-cg-credentials > div:first-child{flex-wrap:wrap}",
+".woow-cg-credentials > div:first-child > p{flex:1 0 100%;min-width:0}",
+".woow-cg-credentials [data-slot=table-container]{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}",
+"}"
 ].join("\n");
 (document.head||document.documentElement).appendChild(css);
+
+// Mark only the verified gateway shell and Models / Credentials DOM. These hooks
+// survive React tab changes via paintAll; no synthetic clicks or auth/API changes.
+function ensureResponsiveLayout(){
+  var sidebar=document.querySelector("aside[data-slot=sidebar][data-collapsed]");
+  if(sidebar && sidebar.nextElementSibling && sidebar.nextElementSibling.querySelector("main")){
+    sidebar.parentElement.classList.add("woow-cg-dashboard");
+  }
+  document.querySelectorAll("main > .mx-4 > .p-8 > [data-slot=tabs]").forEach(function(tabs){
+    var credentialsTab=Array.prototype.find.call(tabs.querySelectorAll("[role=tab]"),function(t){ return t.textContent.trim()==="LLM Credentials"; });
+    if(!credentialsTab) return;
+    tabs.parentElement.classList.add("woow-cg-models-page");
+    tabs.querySelectorAll("[role=tabpanel] > div.mx-auto.w-full").forEach(function(panel){
+      var header=panel.firstElementChild, description=header && header.querySelector(":scope > p");
+      if(description && description.textContent.trim()==="Configured credentials for different AI providers. Add and manage your API credentials."){
+        panel.classList.add("woow-cg-credentials");
+      }
+    });
+  });
+}
 
 // ── dialogs ──
 function credentialDialogs(){
@@ -1511,7 +1542,7 @@ function ensureModelTabs(){
     if(frame && frame.classList.contains('mx-4')) frame.classList.add("woow-cg-model-frame");
   });
 }
-function paintAll(){ ensureModelTabs(); credentialDialogs().forEach(ensurePanel); ensureBadges(); ensureDeleteHint(); }
+function paintAll(){ ensureModelTabs(); ensureResponsiveLayout(); credentialDialogs().forEach(ensurePanel); ensureBadges(); ensureDeleteHint(); }
 var queued=false;
 function schedule(){ if(queued) return; queued=true; requestAnimationFrame(function(){ queued=false; paintAll(); }); }
 new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true});
