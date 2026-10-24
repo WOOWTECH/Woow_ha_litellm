@@ -30,7 +30,9 @@ Roles:
    * ``ChatGPTConfig`` / ``ChatGPTResponsesAPIConfig``: the token and ChatGPT-Account-Id come
      from the account the request names (the credential's reference), not one global file;
      no token is fetched while LiteLLM merely builds a deployment, so models can be added before
-     their account is signed in;
+     their account is signed in; a 429 usage_limit_reached (weekly quota used up) without a
+     Retry-After gets one (woow_usage_limit, chart 0.3.14) so the router keeps that account out
+     of the rotation for minutes instead of 5 s;
    and puts the /woow/chatgpt page (woow_chatgpt_plugin.py) on the proxy app.
 2. ``remote_models`` / ``register_model_costs``: an account's model list straight from ChatGPT,
    and LiteLLM taught the ones its bundled model map does not know yet.
@@ -78,6 +80,7 @@ PATCH_TARGET = "litellm.llms.chatgpt.authenticator"
 CHAT_TARGET = "litellm.llms.chatgpt.chat.transformation"
 RESPONSES_TARGET = "litellm.llms.chatgpt.responses.transformation"
 PROXY_UTILS_TARGET = "litellm.proxy.utils"
+REQUEST_PROCESSING_TARGET = "litellm.proxy.common_request_processing"
 PROXY_TARGET = "litellm.proxy.proxy_server"
 # The account's model list is the one the Codex CLI reads (codex-rs models manager); the
 # backend wants a client_version and answers with the models this plan may use.
@@ -728,6 +731,37 @@ def _auth_error(model, exc):
     return AuthenticationError(model=model, llm_provider="chatgpt", message=str(getattr(exc, "message", None) or exc))
 
 
+def _usage_limit_module():
+    """woow_usage_limit (chart 0.3.14), or None: optional like woow_upstream_errors — a missing
+    file or an import error only leaves a 429's headers as the backend sent them."""
+    try:
+        import woow_usage_limit
+    except Exception as exc:  # noqa: BLE001
+        if not getattr(_usage_limit_module, "_logged", False):
+            _usage_limit_module._logged = True
+            _log(f"exhausted-quota 429 gets no cooldown hint: {exc!r}")
+        return None
+    return woow_usage_limit
+
+
+def _patch_error_class(cls) -> None:
+    """An exhausted weekly quota (429 usage_limit_reached, no Retry-After) keeps its deployment out
+    of the router's rotation for a while instead of the default 5 s (see woow_usage_limit)."""
+    original = cls.get_error_class
+    if getattr(original, "_woow_usage_limit", False):
+        return
+
+    def get_error_class(self, error_message, status_code, headers):
+        module = _usage_limit_module()
+        if module is not None:
+            headers = module.with_cooldown_hint(status_code, error_message, headers)
+        return original(self, error_message, status_code, headers)
+
+    get_error_class._woow_usage_limit = True
+    get_error_class.__wrapped__ = original
+    cls.get_error_class = get_error_class
+
+
 def _patch_chat(module) -> None:
     cls = module.ChatGPTConfig
     if getattr(cls, "_woow_patched", False):
@@ -755,6 +789,7 @@ def _patch_chat(module) -> None:
 
     cls._get_openai_compatible_provider_info = _get_openai_compatible_provider_info
     cls.validate_environment = validate_environment
+    _patch_error_class(cls)
     cls._woow_patched = True
 
 
@@ -777,6 +812,7 @@ def _patch_responses(module) -> None:
         return {**get_chatgpt_default_headers(token, account_id, session_id), **headers}
 
     cls.validate_environment = validate_environment
+    _patch_error_class(cls)
     cls._woow_patched = True
 
 
@@ -798,11 +834,103 @@ def _patch_proxy_logging(module) -> None:
             import woow_chatgpt_plugin
 
             woow_chatgpt_plugin.check_request(user, data)
+            reasoning = _reasoning_module()
+            if reasoning is not None:
+                reasoning.pre_call(data)
+            unpriced = _unpriced_module()
+            if unpriced is not None:
+                unpriced.pre_call(user, data)
         return await original(self, *args, **kwargs)
 
     pre_call_hook._woow_account_guard = True
     pre_call_hook.__wrapped__ = original
     cls.pre_call_hook = pre_call_hook
+    _patch_reasoning_floor(cls)
+
+
+def _reasoning_module():
+    """woow_reasoning (AI-FIX-LLM-2), or None: the module is optional — a missing file (an older
+    HA add-on bundle) or an import error only leaves requests as they were."""
+    try:
+        import woow_reasoning
+    except Exception as exc:  # noqa: BLE001
+        if not getattr(_reasoning_module, "_logged", False):
+            _reasoning_module._logged = True
+            _log(f"reasoning output floor NOT active: {exc!r}")
+        return None
+    return woow_reasoning
+
+
+def _unpriced_module():
+    """woow_unpriced (AI-FIX-LLM-4), or None: optional like woow_reasoning — a missing file or an
+    import error only leaves requests as they were."""
+    try:
+        import woow_unpriced
+    except Exception as exc:  # noqa: BLE001
+        if not getattr(_unpriced_module, "_logged", False):
+            _unpriced_module._logged = True
+            _log(f"unpriced-model budget warning NOT active: {exc!r}")
+        return None
+    return woow_unpriced
+
+
+def _patch_reasoning_floor(cls) -> None:
+    """Explain a raised output limit / an empty `length` reply / a model without a price on the
+    response (the request side runs inside the pre-call wrapper above, after the account guard)."""
+    post = getattr(cls, "post_call_success_hook", None)
+    if post is None or getattr(post, "_woow_reasoning_floor", False):
+        return
+
+    async def post_call_success_hook(self, *args, **kwargs):
+        out = await post(self, *args, **kwargs)
+        reasoning = _reasoning_module()
+        if reasoning is not None:
+            reasoning.post_call(out if out is not None else kwargs.get("response"))
+        unpriced = _unpriced_module()
+        if unpriced is not None:
+            unpriced.post_call(out if out is not None else kwargs.get("response"))
+        return out
+
+    post_call_success_hook._woow_reasoning_floor = True
+    post_call_success_hook.__wrapped__ = post
+    cls.post_call_success_hook = post_call_success_hook
+
+
+def _upstream_errors_module():
+    """woow_upstream_errors (AUDITFIX litellm-retry-timeout), or None: optional like woow_reasoning —
+    a missing file or an import error only leaves error answers as they were."""
+    try:
+        import woow_upstream_errors
+    except Exception as exc:  # noqa: BLE001
+        if not getattr(_upstream_errors_module, "_logged", False):
+            _upstream_errors_module._logged = True
+            _log(f"upstream retry-after / timeout answers NOT adjusted: {exc!r}")
+        return None
+    return woow_upstream_errors
+
+
+def _patch_request_processing(module) -> None:
+    """Upstream retry hints and timeouts: woow_upstream_errors fixes up the answer that
+    ProxyBaseLLMRequestProcessing._handle_llm_api_exception raises for a failed request
+    (forwards Retry-After / x-should-retry under their own names; an upstream timeout is 504)."""
+    cls = getattr(module, "ProxyBaseLLMRequestProcessing", None)
+    original = getattr(cls, "_handle_llm_api_exception", None)
+    if original is None or getattr(original, "_woow_upstream_errors", False):
+        return
+
+    async def _handle_llm_api_exception(self, *args, **kwargs):
+        cause = kwargs["e"] if "e" in kwargs else (args[0] if args else None)
+        try:
+            return await original(self, *args, **kwargs)
+        except Exception as answer:
+            upstream_errors = _upstream_errors_module()
+            if upstream_errors is not None:
+                upstream_errors.adjust(answer, cause)
+            raise
+
+    _handle_llm_api_exception._woow_upstream_errors = True
+    _handle_llm_api_exception.__wrapped__ = original
+    cls._handle_llm_api_exception = _handle_llm_api_exception
 
 
 def _install_plugin_routes(module) -> None:
@@ -818,6 +946,7 @@ _HOOKS = {
     CHAT_TARGET: _patch_chat,
     RESPONSES_TARGET: _patch_responses,
     PROXY_UTILS_TARGET: _patch_proxy_logging,
+    REQUEST_PROCESSING_TARGET: _patch_request_processing,
     PROXY_TARGET: _install_plugin_routes,
 }
 

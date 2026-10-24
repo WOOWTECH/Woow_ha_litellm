@@ -525,6 +525,11 @@ def litellm_env(opts: dict) -> dict[str, str]:
                 "WOOW_CHATGPT_ENABLED": "true",
                 "WOOW_CHATGPT_DEFAULT_MODELS": "visible",
                 "WOOW_PROXY_PORT": "4000",
+                # The shared plugin's dashboard cookie hardening forces `Secure` on the session
+                # cookie. Home Assistant is often opened over plain http (homeassistant.local:8123),
+                # where the browser drops a Secure cookie and the dashboard sign-in loops; keep it
+                # off until the shared module can leave `Secure` out (the PaaS serves only https).
+                "WOOW_UI_TOKEN_HTTPONLY": "false",
             }
         )
     for item in opts["env_vars"]:

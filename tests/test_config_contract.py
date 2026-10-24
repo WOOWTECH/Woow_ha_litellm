@@ -279,7 +279,19 @@ def test_postgres_settings():
 # ── Woow plugin copy (§5.9) ───────────────────────────────────────────────────
 def test_plugin_copy_matches_lock():
     dest = REPO / PLUGIN_LOCK["destination"]
-    assert set(PLUGIN_LOCK["files"]) == {"sitecustomize.py", "woow_chatgpt.py", "woow_chatgpt_plugin.py"}
+    # the shared set is decided by the woow release train manifest (woow-versions.yaml shared_files):
+    # the plugin files plus every module they import
+    assert set(PLUGIN_LOCK["files"]) == {
+        "sitecustomize.py",
+        "woow_chatgpt.py",
+        "woow_chatgpt_plugin.py",
+        "woow_ui_cookie_hardening.py",
+        "woow_body_limit.py",
+        "woow_usage_limit.py",
+        "woow_reasoning.py",
+        "woow_unpriced.py",
+        "woow_upstream_errors.py",
+    }
     assert {p.name for p in dest.iterdir()} == set(PLUGIN_LOCK["files"])
     for name, want in PLUGIN_LOCK["files"].items():
         data = (dest / name).read_bytes()
