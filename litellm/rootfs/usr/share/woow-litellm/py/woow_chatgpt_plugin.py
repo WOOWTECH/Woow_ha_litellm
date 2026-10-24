@@ -686,7 +686,8 @@ body.embed main{padding:12px 12px 24px}body.embed header{display:none}body.embed
     <ul class="small">
       <li>需要 ChatGPT Plus 或 Pro。</li>
       <li>這是借用 Codex 的登入方式，不是 OpenAI 官方的第三方整合；用量算在該帳號的訂閱，帳號風險自行承擔。</li>
-      <li>一個 ChatGPT 帳號只連一個地方（同一台 LiteLLM 也不要用兩個憑證連同一個帳號）；登入網址與代碼只能自己使用。</li>
+      <li>同一個 ChatGPT 帳號可以同時登入多個 LiteLLM，但每個 LiteLLM 要各自登入，不要把一台的登入檔複製到另一台（同一組 refresh token 只能用一次）；同一台 LiteLLM 內不要用兩個憑證連同一個帳號。訂閱額度由所有使用該帳號的地方共用。</li>
+      <li>登入網址與代碼只能自己使用。</li>
     </ul>
     <label class="row small"><input type="checkbox" id="agree"> 我了解並同意</label>
     <p class="small" style="margin:12px 0 6px">選擇登入方式：</p>
@@ -1205,9 +1206,40 @@ css.textContent=[
 "@media (prefers-color-scheme:dark){.woow-cg-sheet{background:#171a21;color:#e6e8eb}}",
 ".woow-cg-sheet header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid rgba(127,127,127,.3);font-weight:600}",
 ".woow-cg-sheet iframe{flex:1;border:0;width:100%}",
-".woow-cg-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483001;background:#111;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;max-width:90vw}"
+".woow-cg-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483001;background:#111;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;max-width:90vw}",
+// LiteLLM 1.104.0: keep the native sidebar toggle/state and table scroll container.
+// The media query uses the dashboard iframe's width, not the outer HA viewport.
+"@media (max-width:767px){",
+".woow-cg-dashboard > [data-slot=sidebar][data-collapsed=false]{position:fixed;inset:0 auto 0 0;z-index:40}",
+".woow-cg-dashboard > [data-slot=sidebar][data-collapsed=false] + div{margin-left:72px}",
+".woow-cg-models-page{padding:8px}",
+".woow-cg-credentials{min-width:0}",
+".woow-cg-credentials > div:first-child{flex-wrap:wrap}",
+".woow-cg-credentials > div:first-child > p{flex:1 0 100%;min-width:0}",
+".woow-cg-credentials [data-slot=table-container]{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}",
+"}"
 ].join("\n");
 (document.head||document.documentElement).appendChild(css);
+
+// Mark only the verified gateway shell and Models / Credentials DOM. These hooks
+// survive React tab changes via paintAll; no synthetic clicks or auth/API changes.
+function ensureResponsiveLayout(){
+  var sidebar=document.querySelector("aside[data-slot=sidebar][data-collapsed]");
+  if(sidebar && sidebar.nextElementSibling && sidebar.nextElementSibling.querySelector("main")){
+    sidebar.parentElement.classList.add("woow-cg-dashboard");
+  }
+  document.querySelectorAll("main > .mx-4 > .p-8 > [data-slot=tabs]").forEach(function(tabs){
+    var credentialsTab=Array.prototype.find.call(tabs.querySelectorAll("[role=tab]"),function(t){ return t.textContent.trim()==="LLM Credentials"; });
+    if(!credentialsTab) return;
+    tabs.parentElement.classList.add("woow-cg-models-page");
+    tabs.querySelectorAll("[role=tabpanel] > div.mx-auto.w-full").forEach(function(panel){
+      var header=panel.firstElementChild, description=header && header.querySelector(":scope > p");
+      if(description && description.textContent.trim()==="Configured credentials for different AI providers. Add and manage your API credentials."){
+        panel.classList.add("woow-cg-credentials");
+      }
+    });
+  });
+}
 
 // ── dialogs ──
 function credentialDialogs(){
@@ -1301,7 +1333,7 @@ function showMethods(dialog,sub){
   var account=sub.dataset.account, name=sub.dataset.name;
   sub.innerHTML='<h3>連結 ChatGPT 帳號：'+txt(name)+'</h3>'+
     '<div class="woow-cg-status-line woow-cg-muted"></div>'+
-    '<ul class="woow-cg-muted"><li>需要 ChatGPT Plus 或 Pro。</li><li>這是借用 Codex 的登入方式，不是 OpenAI 官方的第三方整合；用量算在該帳號的訂閱，帳號風險自行承擔。</li><li>一個 ChatGPT 帳號只連一個憑證；登入網址與代碼只能自己使用。</li></ul>'+
+    '<ul class="woow-cg-muted"><li>需要 ChatGPT Plus 或 Pro。</li><li>這是借用 Codex 的登入方式，不是 OpenAI 官方的第三方整合；用量算在該帳號的訂閱，帳號風險自行承擔。</li><li>同一個 ChatGPT 帳號可以同時登入多個 LiteLLM，但每個 LiteLLM 要各自登入，不要把一台的登入檔複製到另一台（同一組 refresh token 只能用一次）；同一台 LiteLLM 內不要用兩個憑證連同一個帳號。訂閱額度由所有使用該帳號的地方共用。</li><li>登入網址與代碼只能自己使用。</li></ul>'+
     '<label class="woow-cg-row" style="margin-top:4px"><input type="checkbox" class="woow-cg-agree"> 我了解並同意</label>'+
     '<p style="margin:12px 0 0"><b>選擇登入方式</b></p>'+
     '<button type="button" class="woow-cg-method woow-cg-m-browser" disabled><b>瀏覽器登入（建議）</b><span class="woow-cg-muted">在新分頁登入 ChatGPT，再把跳轉後的網址貼回來。不用改 ChatGPT 設定。</span></button>'+
@@ -1510,7 +1542,7 @@ function ensureModelTabs(){
     if(frame && frame.classList.contains('mx-4')) frame.classList.add("woow-cg-model-frame");
   });
 }
-function paintAll(){ ensureModelTabs(); credentialDialogs().forEach(ensurePanel); ensureBadges(); ensureDeleteHint(); }
+function paintAll(){ ensureModelTabs(); ensureResponsiveLayout(); credentialDialogs().forEach(ensurePanel); ensureBadges(); ensureDeleteHint(); }
 var queued=false;
 function schedule(){ if(queued) return; queued=true; requestAnimationFrame(function(){ queued=false; paintAll(); }); }
 new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true});

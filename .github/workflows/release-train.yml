@@ -21,4 +21,4 @@ permissions:
 jobs:
   check:
     name: Release train
-    uses: WOOWTECH/woow-release-train/.github/workflows/wvt-check.yml@5cb9f40e29cad3b70cbdfd73859dd1113afb710c  # main 2026-10-24; this repo pins every action to a commit
+    uses: WOOWTECH/woow-release-train/.github/workflows/wvt-check.yml@5cb9f40e29cad3b70cbdfd73859dd1113afb710c  # main 2026-10-24, pinned

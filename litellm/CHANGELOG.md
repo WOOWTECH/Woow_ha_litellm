@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.12
+
+2026-10-24
+
+### Woow 外掛同步到 woow-paas-charts 0.3.14（d3cd689）
+
+把 PaaS 在 0.3.5 之後對 Woow 外掛做的修正帶進 HA（woow release train 清冊排定的同步）。共用的外掛檔從 3 個增加到 9 個：新增的 6 個模組都是外掛本身會 import 的；`woow_revoke_ui_sessions.py` 只用於 PaaS，所以不帶過來。
+
+- ChatGPT 帳號週額度用完時，429 回應會附上 `Retry-After`；帳號冷卻時間從 5 秒拉長到分鐘級。
+- 同一個 ChatGPT 帳號可以同時登入多個 LiteLLM。
+- 上游卡住時，會在通道逾時之前先回 JSON 格式的 504，並轉送上游的 `Retry-After`。
+- 推理型路由收到過小的 `max_tokens` 時，不再回空內容：會調高到下限，或回 400。
+- 有預算限制的 key 呼叫沒有價格的模型時，會發出警告或直接拒絕。
+- 管理介面的登入 cookie 改成 HttpOnly，前端只拿到不含金鑰的替代值。`WOOW_UI_TOKEN_HTTPONLY` 預設開啟，所以 HA 會直接套用這項變更。
+- 窄畫面裡的憑證控制項可以正常操作；登入流程中的 FastAPI 相依項目已修正。
+- 請求本體上限（413）只在設定 `WOOW_MAX_REQUEST_SIZE_MB` 時才會啟用。HA 沒有設定這個值，所以這部分行為不變。
+
 ## 0.1.11
 
 2026-10-15

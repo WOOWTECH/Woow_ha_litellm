@@ -16,7 +16,9 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 dest="$repo/litellm/rootfs/usr/share/woow-litellm/py"
 lock="$repo/litellm/woow-plugin.lock.json"
 src_path="charts/litellm/files"
-files="sitecustomize.py woow_chatgpt.py woow_chatgpt_plugin.py"
+# The shared set (woow release train manifest, woow-versions.yaml shared_files): the plugin files
+# and every module they import. woow_revoke_ui_sessions.py stays PaaS-only.
+files="sitecustomize.py woow_chatgpt.py woow_chatgpt_plugin.py woow_ui_cookie_hardening.py woow_body_limit.py woow_usage_limit.py woow_reasoning.py woow_unpriced.py woow_upstream_errors.py"
 
 full="$(git -C "$charts" rev-parse --verify "$commit^{commit}")"
 chart_version="$(git -C "$charts" show "$full:charts/litellm/Chart.yaml" | sed -n 's/^version:[[:space:]]*//p' | head -n1)"

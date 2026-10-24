@@ -5,28 +5,58 @@
     "repository": "woow-paas/woow-paas-charts",
     "url": "https://git-prod.woowtech.io/woow-paas/woow-paas-charts",
     "path": "charts/litellm/files/",
-    "commit": "4ad95a11d8dad671b342d6cc9454c87a3130e8b6",
-    "branch": "origin/HEAD",
-    "chart_version": "0.3.5",
+    "commit": "d3cd6898b29a9e094fd616bc151399c9884e5c19",
+    "branch": "main",
+    "chart_version": "0.3.14",
     "merged_to_main": true
   },
   "destination": "litellm/rootfs/usr/share/woow-litellm/py/",
-  "synced_at": "2026-10-15T07:40:54Z",
+  "synced_at": "2026-10-24T00:39:51Z",
   "files": {
     "sitecustomize.py": {
-      "git_blob": "f5407aacd4ed0d0202da7d6c578ef6a267b8a45b",
-      "sha256": "ff203522b00575aa70f8b8369efb526d976f83dbcff869857bb97b68c6945187",
-      "size": 662
+      "git_blob": "9fafb94e9ac1f927d79a38d2101aefcb1f4660dc",
+      "sha256": "7348917f0a71eff510b31e8c09fc27bf1be00ac3607beea67c8921eb81d9e62c",
+      "size": 2072
     },
     "woow_chatgpt.py": {
-      "git_blob": "527c16c68a83958cc2f124253632b98de20b56c6",
-      "sha256": "939ddc581835069fc25941dd9b3ce5c0537643dfe3d412ee36aee76c7f770117",
-      "size": 66248
+      "git_blob": "1603136fd6794f259c496d0501a71105a39b1e15",
+      "sha256": "381452f199b1a6cf0c98eed88b8b1f48e799951979edd165b44b274f9755fd7a",
+      "size": 71873
     },
     "woow_chatgpt_plugin.py": {
-      "git_blob": "cfcd0f65c257f44db3e995ea6fd635e76c7255f3",
-      "sha256": "1547b4ceac947e0d4c0e1f294e888b793455ae65b4cefc72b19796323231b0a3",
-      "size": 100172
+      "git_blob": "f766e88f8279f8220eefe39cde5cfb82001c65bd",
+      "sha256": "eeded0f21f2a4245e69ea7bc8e7666363afe142a638debf46a0bb5c86035fd88",
+      "size": 102603
+    },
+    "woow_ui_cookie_hardening.py": {
+      "git_blob": "dd1c42a7dc649959263d1c466753554ac1c08a50",
+      "sha256": "ab024730ac87b4f664dab74a35cbbfb0c151975b146c9c1b2e1723a8e670e1c3",
+      "size": 13033
+    },
+    "woow_body_limit.py": {
+      "git_blob": "d861175cc9998821c9876d62453b328488723be0",
+      "sha256": "c846bbd83afc47f65a75ce8ebb7974dc179443ee9208d7d889f94b5d75a12813",
+      "size": 7418
+    },
+    "woow_usage_limit.py": {
+      "git_blob": "2b162cb0f19632d4d7caa44359b5734eed85e44a",
+      "sha256": "5c2f4ff1b1179bb770bd69a7a5e691cb6aa2d9d13377f33f053f6e0c2ea54e35",
+      "size": 5069
+    },
+    "woow_reasoning.py": {
+      "git_blob": "ece1f8a5c966a6d8b7a9e0e3c39510952275cc59",
+      "sha256": "0b6e842369d5d21e0d4f3f18b8fb6547607ef64516ce6fb0fc2ab34b2e9af253",
+      "size": 11483
+    },
+    "woow_unpriced.py": {
+      "git_blob": "6c4477156f400fb2ecb1a3cc96aba51089da7186",
+      "sha256": "7bf3208b00b7f17347611b329531f944865c0a6578cd38de5a66def53c918826",
+      "size": 10901
+    },
+    "woow_upstream_errors.py": {
+      "git_blob": "77aab32bbd6a41a85ebd3846712a7fa106cb6ec3",
+      "sha256": "6352e1b82a8d1f6f31c95cf6d98ecbf8e46825c933b20e59a789f52bd49db19e",
+      "size": 6729
     }
   }
 }
