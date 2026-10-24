@@ -1,7 +1,7 @@
 {
-  "addon_version": "0.1.14",
+  "addon_version": "0.1.15",
   "litellm_version": "1.104.0",
   "litellm_digest": "sha256:843a35c72a832e9c062b66111b1aa54e6588fb32c3ab400d3e20ea9c5fa656a0",
-  "woow_plugin_source": "woow-paas-charts 0.3.15@b9f5ca8",
+  "woow_plugin_source": "woow-paas-charts 0.3.16@b3e8371",
   "compatibility_patch": "chatgpt-responses-output-recovery-20261013"
 }

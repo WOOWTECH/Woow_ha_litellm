@@ -121,7 +121,7 @@ RUN python -I /usr/share/woow-litellm/patches/apply_m4_batch1.py
 # interval is set; last, after the batch 1 output it builds on.
 RUN python -I /usr/share/woow-litellm/patches/apply_stream_slot_release.py
 
-ARG BUILD_VERSION=0.1.14
+ARG BUILD_VERSION=0.1.15
 ARG BUILD_REF=unknown
 ARG BUILD_ARCH=amd64
 # CI supplies the actual UTC build time; do not inherit the base image creation date.
@@ -140,7 +140,7 @@ LABEL org.opencontainers.image.title="Woow LiteLLM" \
       io.hass.version=${BUILD_VERSION} \
       io.woowtech.litellm.version=1.104.0 \
       io.woowtech.litellm.digest=sha256:843a35c72a832e9c062b66111b1aa54e6588fb32c3ab400d3e20ea9c5fa656a0 \
-      io.woowtech.woow-plugin.source=0.3.15@b9f5ca8e373e45826c948717f73a384d6b5e3ae1
+      io.woowtech.woow-plugin.source=0.3.16@b3e8371487794d8531d1b5c01f11969088cd166d
 
 # start-period 45 min ≥ Supervisor retry 1 + pre-upgrade dump 10 + migration 25 + LiteLLM 5 (§7.6).
 HEALTHCHECK --start-period=45m --start-interval=10s --interval=60s --timeout=10s --retries=3 \

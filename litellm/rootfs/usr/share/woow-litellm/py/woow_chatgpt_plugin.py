@@ -785,10 +785,20 @@ async function useKey(k,fromCookie){
   key=k;
   try{
     await loadAccounts();
+    say("");
     $("authInfo").textContent=fromCookie?"已使用你在 LiteLLM 後台的管理員登入。":"已使用輸入的金鑰。";
     $("keyRow").classList.add("hidden");
     await select(cur); return true;
   }catch(e){
+    // A gateway answer or a dropped connection says nothing about the login: keep the key and
+    // try it again in 15 s (the refresh api() scheduled would run without a key).
+    if(e.status===0||gatewayError(e.status)){
+      say(e.message,"err");
+      $("authInfo").textContent="暫時無法確認 LiteLLM 後台的登入，15 秒後自動重試。";
+      if(gatewayRefresh) clearTimeout(gatewayRefresh);
+      gatewayRefresh=setTimeout(function(){ gatewayRefresh=null; useKey(k,fromCookie); },15000);
+      return true;
+    }
     key=null;
     $("authInfo").textContent=(e.status===403?"這個身分不是 LiteLLM 管理員。":"尚未登入 LiteLLM 後台。")+" 請先到 /ui 用管理員登入，或在下方輸入 master key／管理員金鑰。";
     $("keyRow").classList.remove("hidden"); return false;
