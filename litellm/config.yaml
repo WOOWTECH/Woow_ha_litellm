@@ -1,5 +1,5 @@
 name: Woow LiteLLM
-version: 0.1.12
+version: 0.1.13
 slug: woow-litellm
 description: LiteLLM AI gateway (OpenAI-compatible) with built-in PostgreSQL
 url: https://github.com/WOOWTECH/Woow_ha_litellm

@@ -102,9 +102,19 @@ OpenAI 相容端點在 `/v1`。**請在 LiteLLM 為每個用途建立虛擬 key*
 或打開 `/woow/chatgpt`，用 ChatGPT Plus／Pro 帳號登入後就能把 ChatGPT 的模型加進 LiteLLM。可以連多個帳號。
 
 - 登入資料放在記憶體（tmpfs），資料庫另存一份，重新啟動不會登出。
-- 一個 ChatGPT 帳號建議只連一個地方（Woow PaaS 或這裡擇一）；各自登入能否長期並存尚未確認。
+- 同一個 ChatGPT 帳號可以同時登入多個 LiteLLM（2026-10-23 實測 HA add-on 與 PaaS 共存，兩邊各自換發 token 後仍可用），
+  但每個 LiteLLM 必須各自完成登入；refresh token 會輪替且只能用一次，請勿複製或共用登入檔。同一台 LiteLLM 內不要用兩個憑證連同一個帳號。
+  訂閱額度由所有使用該帳號的地方共用。
   **不可把備份或 dump 還原到第二台並同時使用**，因為兩邊會共用輪替的 refresh token。
+- 多個帳號加同名模型時成為同一個模型群組、自動分流。某帳號的**週額度用完**（429 `usage_limit_reached`，通常數小時到數天才重置，且上游不帶 `Retry-After`）時，外掛會替它補 `Retry-After`（至少 61、最多 900 秒），路由器讓該帳號冷卻最長 15 分鐘，不再每 6–9 秒就打一次；`Retry-After` 也會回給呼叫端。冷卻存在記憶體，重新啟動 add-on 會清掉；額度提早恢復時最晚晚 15 分鐘才會再用到。只有一個帳號的群組不冷卻（LiteLLM 的規則）。
 - 訂閱模型的 cost 記為 **0**；金額預算不能限制訂閱用量，請使用 RPM／TPM 限流與模型權限控制。
+- 同一個外掛也帶來下列行為（只在 `chatgpt_subscription` 開啟時載入；與 Woow PaaS 的預設相同，另有說明者除外）：
+  - 推論模型（o 系列、gpt-5 以上、DeepSeek R1、`:thinking` 等，或模型資訊標了 `supports_reasoning`）的輸出上限小於 512 時自動提高到 512，回應帶 `x-woow-max-tokens-raised: 16->512`；
+    隱藏推理用完上限造成空回覆時帶 `x-woow-warning: reasoning_exhausted_max_tokens`。請求關閉推理（`reasoning_effort: none`）或帶 `thinking` 則不動。
+  - 有預算上限的金鑰使用沒有單價的模型時，回應帶 `x-woow-warning: model_unpriced_budget_not_enforced`（照常放行；與 `WOOW_BUDGET_UNPRICED=block_budgeted_keys` 的拒絕並存，後者先擋）。
+  - 上游回 408／409／429／5xx 時，把上游的 `Retry-After`、`retry-after-ms`、`x-should-retry` 以標準名稱轉給呼叫端；上游逾時改回 504（`type: timeout`）而不是 408。
+  - 請求本體上限 64 MB（與側邊欄 Ingress 相同），超過回 413 `request_too_large`；4000 埠也適用。
+  - 後台 session cookie 的 HttpOnly 加固在此 add-on 預設關閉：它會強制 `Secure`，區網用 HTTP 開 HA（或直連 4000 埠）時瀏覽器會丟掉 cookie 而登入不了。全程 HTTPS 時可用 `WOOW_UI_TOKEN_HTTPONLY=true` 開啟。
 - 關掉 `chatgpt_subscription` 並重新啟動後，ChatGPT 訂閱模型不會載入執行中的路由，也不會觸發上游裝置登入；其他供應商模型照常載入。
 - 資料庫中的模型、憑證與已連線帳號均保留；重新開啟並啟動後恢復載入。要刪除帳號請先在 ChatGPT 訂閱頁中斷連線。
 - 已知小問題：從區網不帶前綴直接開 `/woow/chatgpt` 時，「回 LiteLLM 後台」連結會 404；從後台進入則正常。
@@ -151,7 +161,8 @@ OpenAI 相容端點在 `/v1`。**請在 LiteLLM 為每個用途建立虛擬 key*
 
 `env_vars` 不可覆寫 add-on 的金鑰、資料庫、設定檔／雲端設定桶、TLS 路徑、登入節流、worker 與監聽埠。
 HA 設定頁的格式驗證不等於啟動驗證；保留字、cron 語意與無法原樣傳遞的值會在啟動時被拒絕，訊息會指出欄位。
-`WOOW_` 開頭的名稱也是保留字，只有上游防護的退回開關可以設定，而且值會檢查：`WOOW_PROVIDER_HEADERS`（`allowlist`／`all`）、`WOOW_PROVIDER_ERROR_LOG`（`raw`／`off`）、`WOOW_TOKEN_LIMIT_VALIDATION`（`enforce`／`warn`／`off`）、`WOOW_BUDGET_ADMISSION`（`strict`／`full`／`resize`）、`WOOW_BUDGET_UNPRICED`（`allow`／`block_budgeted_keys`）、`WOOW_BUDGET_REASONING_RESERVE_TOKENS` 與 `WOOW_BUDGET_MIN_INPUT_TOKENS`（0 到 9999999 的整數）。
+`WOOW_` 開頭的名稱也是保留字，只有下列退回開關可以設定，而且值會檢查：`WOOW_PROVIDER_HEADERS`（`allowlist`／`all`）、`WOOW_PROVIDER_ERROR_LOG`（`raw`／`off`）、`WOOW_TOKEN_LIMIT_VALIDATION`（`enforce`／`warn`／`off`）、`WOOW_BUDGET_ADMISSION`（`strict`／`full`／`resize`）、`WOOW_BUDGET_UNPRICED`（`allow`／`block_budgeted_keys`）、`WOOW_BUDGET_REASONING_RESERVE_TOKENS` 與 `WOOW_BUDGET_MIN_INPUT_TOKENS`（0 到 9999999 的整數）。
+Woow 外掛（0.3.14，隨 `chatgpt_subscription` 載入）的行為也可以退回，預設值寫在括號內：`WOOW_REASONING_MIN_OUTPUT_MODE`（`raise`／`reject`／`off`；`raise`）、`WOOW_REASONING_MIN_OUTPUT_TOKENS`（整數；512，0＝關閉）、`WOOW_UNPRICED_MODEL_MODE`（`warn`／`reject`／`off`；`warn`）、`WOOW_FORWARD_RETRY_AFTER`（`true`／`false`；`true`）、`WOOW_UPSTREAM_TIMEOUT_STATUS`（`504`／`408`；`504`）、`WOOW_MAX_REQUEST_SIZE_MB`（MB，可含小數，0＝不限制；64）、`WOOW_UI_TOKEN_HTTPONLY`（`true`／`false`；`false`）、`WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS`（秒數，0 到 86400，0＝關閉；900）。
 OpenRouter 錯誤回給呼叫端前會清洗；上游原文只寫進 add-on 記錄，每個錯誤一筆 ERROR（`log_level: error` 也看得到），先遮蔽金鑰（`sk-…`、Bearer、JWT、`api_key=` 等）再截到 2000 字，不會進回應、用量紀錄或回應標頭；`WOOW_PROVIDER_ERROR_LOG=off` 可不記。
 PostgreSQL 使用 UTC 時間且不記錄例行 checkpoint；LiteLLM 的清理排程依 HA 時區。
 未帶 API key 的請求可能留下 LiteLLM 上游的 ERROR／traceback，但 HTTP 回應仍是 401。

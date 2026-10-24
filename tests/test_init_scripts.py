@@ -34,8 +34,19 @@ LITELLM_ONLY = {
     "LITELLM_EXPIRED_UI_SESSION_KEY_CLEANUP_ENABLED", "LITELLM_EXPIRED_UI_SESSION_KEY_CLEANUP_INTERVAL_SECONDS",
     "FORWARDED_ALLOW_IPS", "ROOT_REDIRECT_URL", "NO_DOCS", "NO_REDOC", "NO_OPENAPI",
 }
-PLUGIN = {"PYTHONPATH", "CHATGPT_TOKEN_DIR", "WOOW_CHATGPT_ENABLED", "WOOW_CHATGPT_DEFAULT_MODELS", "WOOW_PROXY_PORT",
-          "WOOW_UI_TOKEN_HTTPONLY"}
+PLUGIN = {
+    "PYTHONPATH", "CHATGPT_TOKEN_DIR", "WOOW_CHATGPT_ENABLED", "WOOW_CHATGPT_DEFAULT_MODELS", "WOOW_PROXY_PORT",
+    "WOOW_REASONING_MIN_OUTPUT_MODE", "WOOW_REASONING_MIN_OUTPUT_TOKENS", "WOOW_UNPRICED_MODEL_MODE",
+    "WOOW_FORWARD_RETRY_AFTER", "WOOW_UPSTREAM_TIMEOUT_STATUS", "WOOW_MAX_REQUEST_SIZE_MB", "WOOW_UI_TOKEN_HTTPONLY",
+    "WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS",
+}
+# What the add-on writes for the plugin 0.3.13/0.3.14 modules (the PaaS chart's defaults, except the two HA decisions).
+PLUGIN_0313_DEFAULTS = {
+    "WOOW_REASONING_MIN_OUTPUT_MODE": "raise", "WOOW_REASONING_MIN_OUTPUT_TOKENS": "512",
+    "WOOW_UNPRICED_MODEL_MODE": "warn", "WOOW_FORWARD_RETRY_AFTER": "true", "WOOW_UPSTREAM_TIMEOUT_STATUS": "504",
+    "WOOW_MAX_REQUEST_SIZE_MB": "64", "WOOW_UI_TOKEN_HTTPONLY": "false",
+    "WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS": "900",
+}
 
 
 def mode(path) -> int:
@@ -136,6 +147,7 @@ def test_first_boot_local_mode_env_complete(box):
     assert "DISABLE_SCHEMA_UPDATE" not in mig
     assert lit["CHATGPT_TOKEN_DIR"] == "/run/woow-chatgpt"
     assert lit["PYTHONPATH"] == "/usr/share/woow-litellm/py"
+    assert {k: lit[k] for k in PLUGIN_0313_DEFAULTS} == PLUGIN_0313_DEFAULTS
     assert lit["LITELLM_UI_SESSION_DURATION"] == "4h"
     assert lit["LITELLM_EXPIRED_UI_SESSION_KEY_CLEANUP_INTERVAL_SECONDS"] == "3600"
     assert lit["DATABASE_URL"] == f"postgresql://litellm:{box.secret('pg_password')}@127.0.0.1:5432/litellm"
@@ -266,6 +278,11 @@ GUARD_SWITCHES = {
     "WOOW_PROVIDER_HEADERS": "all", "WOOW_TOKEN_LIMIT_VALIDATION": "off", "WOOW_BUDGET_ADMISSION": "resize",
     "WOOW_BUDGET_UNPRICED": "block_budgeted_keys", "WOOW_BUDGET_REASONING_RESERVE_TOKENS": "4096",
     "WOOW_BUDGET_MIN_INPUT_TOKENS": "0", "WOOW_PROVIDER_ERROR_LOG": "off",
+    # Woow plugin 0.3.13/0.3.14 rollback switches (each differs from the add-on default written above).
+    "WOOW_REASONING_MIN_OUTPUT_MODE": "off", "WOOW_REASONING_MIN_OUTPUT_TOKENS": "2048",
+    "WOOW_UNPRICED_MODEL_MODE": "reject", "WOOW_FORWARD_RETRY_AFTER": "false", "WOOW_UPSTREAM_TIMEOUT_STATUS": "408",
+    "WOOW_MAX_REQUEST_SIZE_MB": "0.5", "WOOW_UI_TOKEN_HTTPONLY": "true",
+    "WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS": "0",
 }
 
 
@@ -284,6 +301,14 @@ def test_upstream_guard_switches_are_the_only_settable_woow_env(box):
         assert res.returncode == 1 and key in res.stderr and "cannot be overridden" in res.stderr
 
 
+@pytest.mark.parametrize("value", ["0", "61", "900", "1800", "86400"])
+def test_usage_limit_cooldown_switch_accepts_whole_seconds_up_to_a_day(box, value):
+    box.options(DEFAULT_OPTIONS, env_vars=[{"key": "WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS", "value": value}])
+    res = box.run("env")
+    assert res.returncode == 0, res.stderr
+    assert box.envdir("litellm")["WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS"] == value
+
+
 @pytest.mark.parametrize(
     "key, value",
     [
@@ -292,13 +317,20 @@ def test_upstream_guard_switches_are_the_only_settable_woow_env(box):
         ("WOOW_BUDGET_REASONING_RESERVE_TOKENS", "-1"), ("WOOW_BUDGET_MIN_INPUT_TOKENS", "lots"),
         ("WOOW_BUDGET_REASONING_RESERVE_TOKENS", "10000000"),
         ("WOOW_PROVIDER_ERROR_LOG", "verbose"), ("WOOW_PROVIDER_ERROR_LOG", "Raw"),
+        ("WOOW_REASONING_MIN_OUTPUT_MODE", "reject!"), ("WOOW_REASONING_MIN_OUTPUT_TOKENS", "-5"),
+        ("WOOW_UNPRICED_MODEL_MODE", "false"), ("WOOW_FORWARD_RETRY_AFTER", "yes"),
+        ("WOOW_UPSTREAM_TIMEOUT_STATUS", "500"), ("WOOW_MAX_REQUEST_SIZE_MB", "-1"),
+        ("WOOW_MAX_REQUEST_SIZE_MB", "big"), ("WOOW_MAX_REQUEST_SIZE_MB", "1e3"), ("WOOW_UI_TOKEN_HTTPONLY", "on"),
+        ("WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS", "-1"), ("WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS", "15m"),
+        ("WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS", "900.5"), ("WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS", ""),
+        ("WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS", "86401"), ("WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS", "0900"),
     ],
 )
 def test_upstream_guard_switch_values_checked(box, key, value):
     box.options(DEFAULT_OPTIONS, env_vars=[{"key": key, "value": value}])
     res = box.run("env")
     assert res.returncode == 1 and key in res.stderr
-    assert "must be one of" in res.stderr or "whole number of tokens" in res.stderr
+    assert "must be one of" in res.stderr or "whole number of tokens" in res.stderr or "number of MB" in res.stderr or "number of seconds" in res.stderr
 
 
 @pytest.mark.parametrize(

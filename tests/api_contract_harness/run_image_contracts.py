@@ -35,7 +35,7 @@ def verify_patched_source(root, patches):
             raise RuntimeError('Built image API patch mismatch: ' + name)
 
 
-def final_api_patches(api_patch, routes_patch, errors_patch, guard_patch, batch1_patch=None):
+def final_api_patches(api_patch, routes_patch, errors_patch, guard_patch, batch1_patch=None, stream_patch=None):
     patches = dict(api_patch.PATCHES)
     before, after, edits = patches[routes_patch.TARGET]
     if after != routes_patch.EXPECTED:
@@ -66,6 +66,21 @@ def final_api_patches(api_patch, routes_patch, errors_patch, guard_patch, batch1
             raise RuntimeError('M4 batch 1 patch must follow the exact upstream guard output: ' + name)
         patches[name] = (patches[name][0] if name in patches else batch_before, batch_after, batch_edits)
     for name, (_, helper_hash) in batch1_patch.HELPERS.items():
+        patches[name] = (None, helper_hash, ())
+    if stream_patch is None:
+        return patches
+    # The stream slot release runs after it; its target must start from the exact batch 1 output. Of
+    # the files its helper calls into, those an installer above edits must be that installer's output;
+    # the pristine one (no installer edits it) is verified in the image as it is.
+    for name, expected in stream_patch.DEPENDENCIES.items():
+        if name in patches and patches[name][1] != expected:
+            raise RuntimeError('Stream slot patch must follow the exact M4 batch 1 output: ' + name)
+        patches.setdefault(name, (expected, expected, ()))
+    for name, (stream_before, stream_after, stream_edits) in stream_patch.PATCHES.items():
+        if name in patches and patches[name][1] != stream_before:
+            raise RuntimeError('Stream slot patch must follow the exact M4 batch 1 output: ' + name)
+        patches[name] = (patches[name][0] if name in patches else stream_before, stream_after, stream_edits)
+    for name, (_, helper_hash) in stream_patch.HELPERS.items():
         patches[name] = (None, helper_hash, ())
     return patches
 
@@ -125,7 +140,10 @@ def main():
         batch1_spec = importlib.util.spec_from_file_location('batch1_patch', HERE / 'apply_m4_batch1.py')
         batch1_patch = importlib.util.module_from_spec(batch1_spec)
         batch1_spec.loader.exec_module(batch1_patch)
-        final_patches = final_api_patches(patch, routes_patch, errors_patch, guard_patch, batch1_patch)
+        stream_spec = importlib.util.spec_from_file_location('stream_patch', HERE / 'apply_stream_slot_release.py')
+        stream_patch = importlib.util.module_from_spec(stream_spec)
+        stream_spec.loader.exec_module(stream_patch)
+        final_patches = final_api_patches(patch, routes_patch, errors_patch, guard_patch, batch1_patch, stream_patch)
         verify_patched_source(root, final_patches)
         print(json.dumps({'litellm_version': importlib.metadata.version('litellm'),
                           'source': str(root), 'verified_patch_files': len(final_patches),
