@@ -13,7 +13,7 @@
 - 上游卡住時，會在通道逾時之前先回 JSON 格式的 504，並轉送上游的 `Retry-After`。
 - 推理型路由收到過小的 `max_tokens` 時，不再回空內容：會調高到下限，或回 400。
 - 有預算限制的 key 呼叫沒有價格的模型時，會發出警告或直接拒絕。
-- 管理介面的登入 cookie 改成 HttpOnly，前端只拿到不含金鑰的替代值。`WOOW_UI_TOKEN_HTTPONLY` 預設開啟，所以 HA 會直接套用這項變更。
+- 管理介面登入 cookie 的加固（HttpOnly＋強制 Secure）在 HA 先不啟用：HA 常以 http 開啟（例如 `homeassistant.local:8123`），瀏覽器會丟掉 Secure cookie，登入後一直回到登入頁。add-on 固定設 `WOOW_UI_TOKEN_HTTPONLY=false`；等共用模組可以不加 Secure 再打開。
 - 窄畫面裡的憑證控制項可以正常操作；登入流程中的 FastAPI 相依項目已修正。
 - 請求本體上限（413）只在設定 `WOOW_MAX_REQUEST_SIZE_MB` 時才會啟用。HA 沒有設定這個值，所以這部分行為不變。
 
