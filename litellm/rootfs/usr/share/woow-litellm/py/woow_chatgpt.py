@@ -44,6 +44,7 @@ Roles:
 from __future__ import annotations
 
 import base64
+import contextvars
 import hashlib
 import importlib.abc
 import json
@@ -649,6 +650,35 @@ def account_override_error(model):
     return BadRequestError(message=ACCOUNT_OVERRIDE_MESSAGE, model=model, llm_provider="chatgpt")
 
 
+# Headers that carry the ChatGPT account (lower-cased): only the resolved account sets them.
+ACCOUNT_HEADERS = frozenset({"authorization", "chatgpt-account-id"})
+
+
+# What validate_environment resolved for the call in progress (same task, lower-cased names).
+_RESOLVED_ACCOUNT_HEADERS: contextvars.ContextVar = contextvars.ContextVar("woow_chatgpt_account_headers", default=None)
+
+
+def remember_account_headers(headers: dict) -> None:
+    _RESOLVED_ACCOUNT_HEADERS.set({name.lower(): value for name, value in headers.items() if name.lower() in ACCOUNT_HEADERS})
+
+
+def check_account_headers(model, headers) -> None:
+    """R02, header seam (provider half; the proxy's pre-call guard is the other). LiteLLM applies a
+    request's extra_headers after validate_environment (``headers.update(extra_headers)``), so an
+    Authorization or ChatGPT-Account-Id header in the request, in any spelling, replaced the
+    account's: the bound token went out with another account id, or another token went out. The
+    final headers must carry exactly what validate_environment resolved for this call; anything
+    else is refused like the other account choices, also on paths the pre-call guard cannot see
+    (router-level fallbacks)."""
+    resolved = _RESOLVED_ACCOUNT_HEADERS.get()
+    if resolved is None:
+        return
+    for name, value in (headers or {}).items():
+        lowered = str(name).lower()
+        if lowered in ACCOUNT_HEADERS and value != resolved.get(lowered):
+            raise account_override_error(model)
+
+
 def check_deployment_binding(model, api_key, litellm_params) -> None:
     """Provider-side half of R02 (the proxy's pre-call guard is the other): a call the router made
     for one of its deployments must use that deployment's account. LiteLLM merges request values
@@ -785,7 +815,9 @@ def _patch_chat(module) -> None:
             headers, model, messages, optional_params, litellm_params, token, api_base
         )
         session_id = ensure_chatgpt_session_id(litellm_params)
-        return {**get_chatgpt_default_headers(token, account_id, session_id), **validated}
+        resolved = get_chatgpt_default_headers(token, account_id, session_id)
+        remember_account_headers(resolved)
+        return {**resolved, **validated}
 
     cls._get_openai_compatible_provider_info = _get_openai_compatible_provider_info
     cls.validate_environment = validate_environment
@@ -809,9 +841,20 @@ def _patch_responses(module) -> None:
         except Exception as exc:  # noqa: BLE001 — GetAccessTokenError
             raise _auth_error(model, exc) from None
         session_id = ensure_chatgpt_session_id(litellm_params)
-        return {**get_chatgpt_default_headers(token, account_id, session_id), **headers}
+        resolved = get_chatgpt_default_headers(token, account_id, session_id)
+        remember_account_headers(resolved)
+        return {**resolved, **headers}
+
+    original_transform = cls.transform_responses_api_request
+
+    def transform_responses_api_request(self, *args, **kwargs):
+        # Runs on the final headers, after LiteLLM applied the request's extra_headers.
+        headers = kwargs["headers"] if "headers" in kwargs else (args[4] if len(args) > 4 else None)
+        check_account_headers(kwargs.get("model", args[0] if args else None), headers)
+        return original_transform(self, *args, **kwargs)
 
     cls.validate_environment = validate_environment
+    cls.transform_responses_api_request = transform_responses_api_request
     _patch_error_class(cls)
     cls._woow_patched = True
 

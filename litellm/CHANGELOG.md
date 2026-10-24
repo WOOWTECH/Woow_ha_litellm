@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.14
+
+- Woow 外掛同步到 woow-paas-charts b9f5ca8e37（woow release train 清冊）。合併前請改成實際變更說明。
+
 ## 0.1.13
 
 2026-10-24

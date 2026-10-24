@@ -581,7 +581,10 @@ class _DashboardScriptInjector:
                     body += tag
             drop = {b"content-length", b"etag", b"last-modified", b"cache-control"}
             headers = [(k, v) for k, v in start.get("headers", []) if k.lower() not in drop]
-            headers += [(b"content-length", str(len(body)).encode()), (b"cache-control", b"no-cache")]
+            # Keep a stricter policy set inside (the cookie hardening's per-session page is never stored).
+            inner = next((v for k, v in start.get("headers", []) if k.lower() == b"cache-control"), b"")
+            headers += [(b"content-length", str(len(body)).encode()),
+                        (b"cache-control", inner if b"no-store" in inner else b"no-cache")]
             await send({**start, "headers": headers})
             await send({"type": "http.response.body", "body": body})
 
@@ -759,10 +762,17 @@ function cookieKey(){
 // sidebar this page shares its origin with the HA frontend and everything else loaded there.
 function storedKey(){ return null; }
 function say(t,cls){ const e=$("msg"); e.textContent=t||""; e.className="small "+(cls||""); }
+// Gateway answers carry no JSON (Cloudflare's 524 after ~125 s, its page for a 504, 502/503 while the pod restarts).
+function gatewayError(s){ return (s===504||s===524)?"閘道逾時（HTTP "+s+"）：後端可能仍在處理，請稍候重新整理確認結果，不要重複送出。":(s===502||s===503||(s>=520&&s<=523))?"暫時連不上 LiteLLM（HTTP "+s+"）：服務可能正在重新啟動，請稍候重新整理再試。":null; }
+let gatewayRefresh=null;
 async function api(method,path,body){
-  const r=await fetch(API+path,{method,headers:Object.assign({"Authorization":"Bearer "+key},body?{"Content-Type":"application/json"}:{}),body:body?JSON.stringify(body):undefined});
+  let r;
+  try{ r=await fetch(API+path,{method,headers:Object.assign({"Authorization":"Bearer "+key},body?{"Content-Type":"application/json"}:{}),body:body?JSON.stringify(body):undefined}); }
+  catch(e){ const err=new Error("連線中斷：請檢查網路後重新整理確認結果。"); err.status=0; throw err; }
   let j=null; try{ j=await r.json(); }catch(e){}
-  if(!r.ok){ const d=j&&(j.detail||(j.error&&j.error.message)); const err=new Error(typeof d==="string"?d:("HTTP "+r.status)); err.status=r.status; throw err; }
+  if(!r.ok){ const d=j&&(j.detail||(j.error&&j.error.message)); const gw=gatewayError(r.status); const err=new Error(typeof d==="string"?d:(gw||("HTTP "+r.status))); err.status=r.status;
+    if(gw&&!gatewayRefresh) gatewayRefresh=setTimeout(function(){ gatewayRefresh=null; refresh(); },15000);
+    throw err; }
   return j;
 }
 const q=a=>"?account="+encodeURIComponent(a);
@@ -1053,7 +1063,10 @@ def account_override_field(user_api_key_dict, data) -> str | None:
       * when a ChatGPT model is reachable: any litellm_credential_name, custom_llm_provider, or an
         api_key that is not a real ChatGPT access token (any other string resolves to the default
         account). A real access token is the caller's own ChatGPT sign-in: it never reaches an
-        account kept on this server, so it stays allowed (it was before; now stated).
+        account kept on this server, so it stays allowed (it was before; now stated);
+      * when a ChatGPT model is reachable: Authorization or ChatGPT-Account-Id (any spelling) in
+        extra_headers or headers — they would point the bound token at another account or swap
+        the token (the provider refuses them too: core.check_account_headers).
     Other providers' request keys (bring-your-own key) are untouched."""
     scopes, names = [data], [data.get("model")]
     for target in _fallback_targets(data):
@@ -1082,6 +1095,10 @@ def account_override_field(user_api_key_dict, data) -> str | None:
                 return "custom_llm_provider"
             if key is not None and not core._looks_like_access_token(key):
                 return "api_key"
+            for field in ("extra_headers", "headers"):
+                value = scope.get(field)
+                if isinstance(value, dict) and any(str(name).lower() in core.ACCOUNT_HEADERS for name in value):
+                    return field
     return None
 
 
@@ -1100,7 +1117,9 @@ def check_request(user_api_key_dict, data) -> None:
         return
     from litellm.proxy._types import ProxyException
 
-    raise ProxyException(message=core.ACCOUNT_OVERRIDE_MESSAGE, type="invalid_request_error", param=field, code=400)
+    refusal = ProxyException(message=core.ACCOUNT_OVERRIDE_MESSAGE, type="invalid_request_error", param=field, code=400)
+    refusal.status_code = 400  # /v1/completions re-wraps an error with its status_code (else 500)
+    raise refusal
 
 
 if "litellm.proxy.proxy_server" in sys.modules:
@@ -1147,13 +1166,15 @@ function key(){
   try{ var p=m[1].split(".")[1].replace(/-/g,"+").replace(/_/g,"/"); while(p.length%4) p+="=";
        var j=JSON.parse(atob(p)); if(j.exp && j.exp*1000<Date.now()) return null; return j.key||null; }catch(e){ return null; }
 }
+// Gateway answers carry no JSON (Cloudflare's 524 after ~125 s, its page for a 504, 502/503 while the pod restarts).
+function gatewayError(s){ return (s===504||s===524)?"閘道逾時（HTTP "+s+"）：後端可能仍在處理，請稍候重新整理確認結果，不要重複送出。":(s===502||s===503||(s>=520&&s<=523))?"暫時連不上 LiteLLM（HTTP "+s+"）：服務可能正在重新啟動，請稍候重新整理再試。":null; }
 function api(method,path,body){
   var k=key(); if(!k) return Promise.reject(new Error("請重新登入 LiteLLM 後台（找不到管理員登入）。"));
   var h={Authorization:"Bearer "+k}; if(body) h["Content-Type"]="application/json";
   return origFetch(API+path,{method:method,headers:h,body:body?JSON.stringify(body):undefined}).then(function(r){
     return r.json().catch(function(){ return {}; }).then(function(j){
-      if(!r.ok){ var d=j&&j.detail; var err=new Error(typeof d==="string"?d:("HTTP "+r.status)); err.status=r.status; throw err; } return j; });
-  });
+      if(!r.ok){ var d=j&&j.detail; var err=new Error(typeof d==="string"?d:(gatewayError(r.status)||("HTTP "+r.status))); err.status=r.status; throw err; } return j; });
+  }, function(){ var err=new Error("連線中斷：請檢查網路後重新整理確認結果。"); err.status=0; throw err; });
 }
 function isChatgpt(v){ return /chatgpt/i.test(String(v||"")); }
 function loadAccounts(force){
