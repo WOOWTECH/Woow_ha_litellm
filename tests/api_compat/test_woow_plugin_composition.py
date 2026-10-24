@@ -339,6 +339,18 @@ class ChatGPTUpstream:
                 return before, failure
         raise AssertionError(f'account a was never picked: seen={self.seen}')
 
+    def exhausted_account_first(self, monkeypatch):
+        """Let simple-shuffle pick account a whenever a is a candidate (only this test's Router is affected).
+        A random pick can leave a for a request's last attempt ([b, b, a], about one run in seven): with no
+        retry left that request ends on a's 429. Picked first, a request meets it with both retries left."""
+        import random
+        import types
+        from litellm.router_strategy import simple_shuffle
+
+        def choice(candidates):
+            return next((d for d in candidates if d['model_info']['id'] == 'dep-a'), None) or random.choice(candidates)
+        monkeypatch.setattr(simple_shuffle, 'random', types.SimpleNamespace(choice=choice, choices=random.choices))
+
     def cooldown(self, *ids):
         return self.router.cooldown_cache.get_min_cooldown(list(ids), None)
 
@@ -361,9 +373,10 @@ def test_exhausted_account_is_cooled_for_900_s_and_the_same_request_moves_on(mon
     account is retried on the other one inside the same call (no client-visible 429), and the exhausted
     account is not probed again while it cools."""
     up = ChatGPTUpstream(monkeypatch, tmp_path, env={USAGE_ENV: ADDON_USAGE})
+    up.exhausted_account_first(monkeypatch)
     before, failure = up.until_a_was_picked()
     mine = up.seen[before:]
-    assert mine.count('a') == 1 and 'b' in mine          # a was tried once, the request ended on the other account
+    assert mine[0] == 'a' and mine.count('a') == 1 and 'b' in mine  # a was tried once, the request ended on the other account
     assert up.reached in str(failure) and getattr(failure, 'status_code', None) != 429
     assert up.cooldown('dep-a') == 900 and 'dep-a' in [i for i, _ in up.active('dep-a')]
     after = len(up.seen)
