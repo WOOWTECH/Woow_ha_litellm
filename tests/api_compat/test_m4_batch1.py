@@ -8,7 +8,8 @@ recording DB writer, auth uses the real cache-backed path. Every credential belo
 R03 no route hands a client the deployment key, a JWT/access token, an internal host or raw
     connection detail; R04 a proxy_admin_viewer cannot run inference; R11 Responses stream events
     carry the requested model group; R15 /health and /health/latest are masked for admins too and
-    ChatGPT endpoints show an api_base; R01 new names with '%' or '/' are refused, stored ones are not.
+    ChatGPT endpoints show an api_base; R01 new names the sidebar or a browser cannot address ('%', '/',
+    '#', '?', '\\', '.', '..') are refused, stored ones are not.
 """
 import asyncio
 import json
@@ -360,15 +361,15 @@ def refused_by_name_rule(result):
     return result.status_code == 400 and 'Home Assistant sidebar' in result.text
 
 
-@pytest.mark.parametrize('name', ['x%2Fy', 'x/y', '100%'])
-def test_new_credential_names_with_percent_or_slash_are_refused(gateway, name):
+@pytest.mark.parametrize('name', ['x%2Fy', 'x/y', '100%', 'x#y', 'x?y', 'a\\b', '.', '..'])
+def test_new_credential_names_the_sidebar_cannot_address_are_refused(gateway, name):
     result = gateway.request('POST', '/credentials', {'credential_name': name, 'credential_info': {}, 'credential_values': {'api_key': 'k'}},
                              token=MASTER)
     assert refused_by_name_rule(result), result.text[:400]
     assert result.json()['error']['param'] == 'credential_name'
 
 
-@pytest.mark.parametrize('name', ['x y', '我的 OpenAI 金鑰', 'plain-name_1.2:3'])
+@pytest.mark.parametrize('name', ['x y', '我的 OpenAI 金鑰', 'plain-name_1.2:3', '.env', "a+b&c=d;e@f!*'()$~[]|^<>{}`"])
 def test_other_credential_names_pass_the_rule(gateway, name):
     result = gateway.request('POST', '/credentials', {'credential_name': name, 'credential_info': {}, 'credential_values': {'api_key': 'k'}},
                              token=MASTER)
@@ -386,6 +387,9 @@ def test_credential_rename_is_refused_but_a_stored_name_keeps_working(gateway):
     ({'model_name': 'm%20x', 'litellm_params': {'model': 'openai/x'}}, 'model_name'),
     ({'model_name': 'ok-name', 'litellm_params': {'model': 'openai/x'}, 'model_info': {'id': 'a/b'}}, 'model_info.id'),
     ({'model_name': 'ok-name', 'litellm_params': {'model': 'openai/x'}, 'model_info': {'id': 'a%b'}}, 'model_info.id'),
+    ({'model_name': 'ok-name', 'litellm_params': {'model': 'openai/x'}, 'model_info': {'id': 'a#b'}}, 'model_info.id'),
+    ({'model_name': 'ok-name', 'litellm_params': {'model': 'openai/x'}, 'model_info': {'id': 'a?b'}}, 'model_info.id'),
+    ({'model_name': 'ok-name', 'litellm_params': {'model': 'openai/x'}, 'model_info': {'id': '..'}}, 'model_info.id'),
 ])
 def test_new_models_with_unsafe_name_or_id_are_refused(gateway, body, param):
     result = gateway.request('POST', '/model/new', body, token=MASTER)

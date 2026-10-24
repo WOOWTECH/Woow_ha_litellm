@@ -51,9 +51,10 @@ server {
         set $woow_upstream_502 @upstream_error;
     }
     # The Supervisor's Ingress decodes the request path once more, so a name holding a literal
-    # %XX (x%2Fy, x%20y) reaches another resource (x/y, x y). While such names exist (marker
-    # written at every start by woow-name-scan), path-addressed writes carrying '%' are refused
-    # with 409: use LiteLLM's port 4000 directly for them. Without the marker nothing changes.
+    # %XX (x%2Fy, x%20y) reaches another resource (x/y, x y), and one holding '#' or '?' (sent as
+    # %23, %3F) is cut there (x#y reaches x). While such names exist (marker written at every
+    # start by woow-name-scan), path-addressed writes carrying '%' are refused with 409: use
+    # LiteLLM's port 4000 directly for them. Without the marker nothing changes.
     set $woow_encoded_write 0;
     if (-f /run/woow/ingress-percent-guard) {
         set $woow_encoded_write $woow_write_with_percent;
@@ -118,7 +119,7 @@ server {
         default_type application/json;
         add_header Cache-Control "no-store" always;
         add_header X-Content-Type-Options "nosniff" always;
-        return 409 '{"error":{"message":"This path contains a percent escape and a credential or model name with a literal % exists: the Home Assistant sidebar (Ingress) decodes paths once more and could change or delete another resource. Use LiteLLM directly on port 4000 for this change (or rename that resource there first). 路徑含百分比編碼，且目前有名稱含「%」的憑證或模型：Home Assistant 側邊欄（Ingress）會再解碼一次路徑，可能改到或刪到別的資源。請改用 LiteLLM 的 4000 埠直接操作（或先在那裡改名）。","type":"ingress_encoded_path","param":null,"code":"409"}}';
+        return 409 '{"error":{"message":"This path contains a percent escape and a credential name or model id with a literal %, # or ? exists: the Home Assistant sidebar (Ingress) decodes paths once more and could change or delete another resource. Use LiteLLM directly on port 4000 for this change (or rename that resource there first). 路徑含百分比編碼，且目前有名稱含「%」、「#」或「?」的憑證或模型 ID：Home Assistant 側邊欄（Ingress）會再解碼一次路徑，可能改到或刪到別的資源。請改用 LiteLLM 的 4000 埠直接操作（或先在那裡改名）。","type":"ingress_encoded_path","param":null,"code":"409"}}';
     }
 
     location @starting {

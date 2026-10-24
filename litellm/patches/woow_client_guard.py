@@ -17,9 +17,11 @@ R15  ``health_endpoint_display()`` applies the same mask to every /health endpoi
      keeps its first line only (no stack trace) and ChatGPT endpoints show their api_base.
 R11  ``restamp_responses_event_model()`` stamps the requested model group on Responses API
      stream events (``event.response.model``), as the non-streaming response already is.
-R01  ``refuse_unsafe_*()`` refuse new credential names and model ids containing '%' or '/', and
-     model names containing '%' (the Home Assistant Ingress decodes such paths once more). Names
-     that already exist are never refused: only creating one or renaming to one is.
+R01  ``refuse_unsafe_*()`` refuse new credential names and model ids containing '%', '/', '#', '?'
+     or '\\' or being '.' or '..', and model names containing '%'. The Home Assistant Ingress
+     decodes request paths once more, and the dashboard puts names into URLs as typed: a browser
+     cuts the URL at '#' or '?', turns '\\' into '/' and resolves '.' and '..'. Names that
+     already exist are never refused: only creating one or renaming to one is.
 
 Every function is idempotent: an error may pass several of these exits.
 """
@@ -350,26 +352,42 @@ def restamp_responses_event_model(chunk: object, model: object) -> object:
     return chunk
 
 
-# ── names the HA Ingress cannot address (R01) ────────────────────────────────
-PATH_UNSAFE: Final = ("%", "/")
+# ── names the HA Ingress or a browser cannot address (R01) ───────────────────
+# PATH_UNSAFE: a name used as a URL path segment (/credentials/{name}, /model/{id}/update).
+PATH_UNSAFE: Final = ("%", "/", "#", "?", "\\")
 NAME_UNSAFE: Final = ("%",)
+DOT_SEGMENTS: Final = (".", "..")
 
 
 def unsafe_name_message(field: str, value: str, chars: tuple) -> str:
-    shown = " or ".join(f"'{char}'" for char in chars)
+    quoted = [f"'{char}'" for char in chars]
+    shown = quoted[0] if len(quoted) == 1 else ", ".join(quoted[:-1]) + " or " + quoted[-1]
     shown_zh = "、".join(f"「{char}」" for char in chars)
+    if "/" not in chars:
+        return (
+            f"Invalid {field} {value!r}: it must not contain {shown}. The Home Assistant sidebar (Ingress) "
+            "decodes request paths once more, so such a name can reach a different resource. Any other "
+            "characters are allowed (letters, digits, spaces, CJK, - _ . : @ ...). "
+            f"{field} 不可包含{shown_zh}：Home Assistant 側邊欄（Ingress）會再解碼一次路徑，可能操作到別的資源；"
+            "其他字元都可以使用（字母、數字、空白、中文、- _ . : @ 等）。"
+        )
     return (
-        f"Invalid {field} {value!r}: it must not contain {shown}. The Home Assistant sidebar (Ingress) "
-        "decodes request paths once more, so such a name can reach a different resource. Any other "
-        "characters are allowed (letters, digits, spaces, CJK, - _ . : @ ...). "
-        f"{field} 不可包含{shown_zh}：Home Assistant 側邊欄（Ingress）會再解碼一次路徑，可能操作到別的資源；"
+        f"Invalid {field} {value!r}: it must not contain {shown}, and must not be '.' or '..'. The dashboard "
+        "puts names into URLs as typed (a browser cuts the URL at '#' or '?' and turns '\\' into '/'), and "
+        "the Home Assistant sidebar (Ingress) decodes request paths once more, so such a name can reach a "
+        "different resource. Any other characters are allowed (letters, digits, spaces, CJK, - _ . : @ ...). "
+        f"{field} 不可包含{shown_zh}，也不可以只是「.」或「..」：後台會把名稱原樣放進網址（瀏覽器會在「#」或「?」"
+        "截斷網址，並把「\\」換成「/」），Home Assistant 側邊欄（Ingress）也會再解碼一次路徑，可能操作到別的資源；"
         "其他字元都可以使用（字母、數字、空白、中文、- _ . : @ 等）。"
     )
 
 
 def unsafe_name(value: object, chars: tuple, existing: object = None) -> bool:
-    """True when ``value`` is a new name (not ``existing``) containing one of ``chars``."""
-    return isinstance(value, str) and value != existing and any(char in value for char in chars)
+    """True when ``value`` is a new name (not ``existing``) containing one of ``chars``; a path
+    segment name (``chars`` holding '/') must not be '.' or '..' either."""
+    if not isinstance(value, str) or value == existing:
+        return False
+    return any(char in value for char in chars) or ("/" in chars and value in DOT_SEGMENTS)
 
 
 def _refuse(field: str, value: str, chars: tuple) -> None:
@@ -391,7 +409,7 @@ def _field(obj: object, name: str) -> object:
 
 
 def refuse_unsafe_new_model(model_params: object) -> None:
-    """POST /model/new: model_name without '%', a client-chosen model id without '%' or '/'."""
+    """POST /model/new: model_name without '%', a client-chosen model id that is a safe path segment."""
     model_name = _field(model_params, "model_name")
     if unsafe_name(model_name, NAME_UNSAFE):
         _refuse("model_name", model_name, NAME_UNSAFE)  # type: ignore[arg-type]

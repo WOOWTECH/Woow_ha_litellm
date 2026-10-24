@@ -142,6 +142,22 @@ def test_scan_arms_the_guard_while_a_percent_name_exists(tmp_path):
     assert 'x%2Fy' in log and 'team/a' in log and 'dep%1' in log and '(409)' in log
 
 
+def test_scan_queries_cover_every_name_the_sidebar_cannot_address():
+    # PLG-26: '#' and '?' (sent as %23, %3F) are decoded by the Ingress into a fragment or query start,
+    # so they arm the 409 guard like '%'; '\' and '.'/'..' only break the dashboard's own URLs.
+    script = (LIB / 'woow-name-scan').read_text()
+    assert '''unaddressable() { echo "($1 ~ '[%/#?]' OR strpos($1, chr(92)) > 0 OR $1 IN ('.', '..'))"; }''' in script
+    assert '''redirected() { echo "$1 ~ '[%#?]'"; }''' in script
+    assert 'WHERE $(unaddressable credential_name) ORDER BY 1' in script
+    assert "WHERE $(unaddressable model_id) OR strpos(model_name, '%') > 0 ORDER BY 1" in script
+    assert 'WHERE $(redirected credential_name)) + ' in script and 'WHERE $(redirected model_id))' in script
+
+
+def test_scan_arms_the_guard_for_hash_and_question_mark_names(tmp_path):
+    log, marker = run_scan(tmp_path, creds='x#y\nx?y', percent='2')
+    assert marker.exists() and 'x#y' in log and 'x?y' in log and "'%', '#' or '?'" in log
+
+
 def test_scan_warns_about_slash_names_without_arming_the_guard(tmp_path):
     (tmp_path / 'ingress-percent-guard').write_text('')
     log, marker = run_scan(tmp_path, creds='team/a', percent='0')
@@ -163,5 +179,6 @@ def test_scan_runs_in_ci_shellcheck_and_docs_explain_the_rule():
     assert 'litellm/rootfs/usr/local/lib/woow-litellm/woow-name-scan' in (REPO / '.github/workflows/ci.yml').read_text()
     assert (LIB / 'woow-name-scan').stat().st_mode & 0o111
     docs = (REPO / 'litellm/DOCS.md').read_text()
-    assert '名稱不可含「%」或「/」' in docs and '409' in docs and 'woow-name-scan' in docs
+    assert '名稱不可含「%」「/」「#」「?」「\\」' in docs and '409' in docs and 'woow-name-scan' in docs
+    assert '409 擋不到' in docs  # legacy '#'/'?' names: the browser cuts the URL before the guard sees it
     assert 'ingress_proxy_error' in docs

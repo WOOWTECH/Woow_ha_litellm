@@ -15,8 +15,9 @@ R15  /health entries (admin callers too), the background health cache, LiteLLM_H
      and ChatGPT endpoints show their api_base.
 R11  Responses API stream events carry the requested model group in response.model, like the
      non-streaming response (HA relay/* models are priced by that name).
-R01  New credential names and model ids containing '%' or '/', and model names containing '%',
-     are refused with 400 (create and rename only; stored names keep working).
+R01  New credential names and model ids that a browser or the HA Ingress cannot address as a path
+     segment (containing '%', '/', '#', '?' or '\\', or being '.' or '..'), and model names
+     containing '%', are refused with 400 (create and rename only; stored names keep working).
 
 Runs last, after apply_upstream_guard.py, on both the HA and the PaaS chains. Five inputs are the
 reviewed outputs of earlier installers (proxy/proxy_server.py and proxy/common_request_processing.py
@@ -35,7 +36,7 @@ import sys
 HELPERS = {
     'litellm_core_utils/woow_client_guard.py': (
         'woow_client_guard.py',
-        '8207bc9962a4d1bf7ca4aff75a431e99340135dbffa83be26f088c9f3258085e',
+        '6acec556b988052ede00e2d237c87562414245d803786a4f861c52ec85762c6e',
     ),
 }
 
@@ -224,7 +225,7 @@ PATCHES = {
     ),
     'proxy/credential_endpoints/endpoints.py': (
         'bff9241d37e9715cfbd64891dc198a30ecedc13a94f2335e9bdc9f4cf1d52b68',
-        '3a6b673ad17a5d5e51ff3f27ccb8bd2dec5c38e71bbbe2e71d6f40ccda072d2f',
+        'e6a09fae16fe3dfa1bc550835380232bbd76025c276f8b4e5c0b68e3d9b33458',
         (
             (
                 '    Stores credential in DB.\n'
@@ -235,7 +236,7 @@ PATCHES = {
                 '    Reloads credentials in memory.\n'
                 '    """\n'
                 '    from litellm.proxy.proxy_server import prisma_client\n'
-                '    # Woow R01: no new name with \'%\' or \'/\' (the HA Ingress decodes the path once more).\n'
+                '    # Woow R01: no new name a browser or the HA Ingress cannot address (woow_client_guard.PATH_UNSAFE).\n'
                 '    from litellm.litellm_core_utils.woow_client_guard import refuse_unsafe_credential_name\n'
                 '\n'
                 '    refuse_unsafe_credential_name(credential.credential_name)\n',
@@ -254,7 +255,7 @@ PATCHES = {
                 '    [BETA] endpoint. This might change unexpectedly.\n'
                 '    """\n'
                 '    from litellm.proxy.proxy_server import prisma_client\n'
-                '    # Woow R01: no rename to a name with \'%\' or \'/\'; keeping the stored name is allowed.\n'
+                '    # Woow R01: no rename to such a name (woow_client_guard.PATH_UNSAFE); keeping the stored name is allowed.\n'
                 '    from litellm.litellm_core_utils.woow_client_guard import refuse_unsafe_credential_name\n'
                 '\n'
                 '    refuse_unsafe_credential_name(credential.credential_name, existing=credential_name)\n',
@@ -264,7 +265,7 @@ PATCHES = {
     ),
     'proxy/management_endpoints/model_management_endpoints.py': (
         'e9262533fe0fc73d676bdfd9e41f7c03d0478727ebf23298c878ee101e8a5e5e',
-        '0b42f217df5b0899ab667cccb09dfb5179df2445c55702d8031976f49054a165',
+        'ecaf62b5bd9e631d35a0eaeb56fdb9ac0c563f42fc4726610ef79953da366e53',
         (
             (
                 '        proxy_logging_obj,\n'
@@ -275,7 +276,7 @@ PATCHES = {
                 '        proxy_logging_obj,\n'
                 '        store_model_in_db,\n'
                 '    )\n'
-                '    # Woow R01: no model_name with \'%\', no client-chosen model id with \'%\' or \'/\'.\n'
+                '    # Woow R01: no model_name with \'%\', no client-chosen model id that is not a safe path segment.\n'
                 '    from litellm.litellm_core_utils.woow_client_guard import refuse_unsafe_new_model\n'
                 '\n'
                 '    refuse_unsafe_new_model(model_params)\n'

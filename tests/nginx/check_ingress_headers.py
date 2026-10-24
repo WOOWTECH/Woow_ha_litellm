@@ -243,9 +243,10 @@ http {{
                     self.assertIn(b'LiteLLM is starting', body)
 
     def test_percent_writes_refused_only_while_percent_names_exist(self):
-        # R01: the Supervisor decodes paths once more; with a literal-% name stored, a write
-        # carrying '%' may hit another resource, so it is refused (409) and nothing reaches LiteLLM.
+        # R01: the Supervisor decodes paths once more; with a literal-%, '#' or '?' name stored, a
+        # write carrying '%' may hit another resource, so it is refused (409) and nothing reaches LiteLLM.
         cases = [('DELETE', '/credentials/x%2Fy'), ('PATCH', '/credentials/x%20y'), ('PUT', '/model/a%25b/update'),
+                 ('DELETE', '/credentials/x%23y'), ('PATCH', '/credentials/x%3Fy'),
                  ('PATCH', '/model/abc/update?x=%20'), ('DELETE', '/credentials/plain'), ('GET', '/credentials/x%2Fy')]
         for guard in (True, False):
             self.flag('ingress-percent-guard', guard)

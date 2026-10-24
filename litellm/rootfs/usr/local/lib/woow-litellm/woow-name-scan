@@ -1,10 +1,13 @@
 #!/bin/sh
 # woow-name-scan (M4 R01): the Supervisor's Ingress decodes request paths once more, so a credential
 # name or model id holding a literal %XX (x%2Fy) is reached as another one (x/y) through the HA
-# sidebar, and a DELETE/PATCH can hit the wrong resource. LiteLLM now refuses new names like that
-# (400); names stored before are listed here at every start, and while any holds a '%' the Ingress
-# nginx refuses path-addressed writes carrying '%' (409, marker below). Rename them through port
-# 4000 to lift it. Model names with '/' are the normal provider form (chatgpt/...) and are fine.
+# sidebar, and a DELETE/PATCH can hit the wrong resource; one holding '#' or '?' (sent as %23, %3F)
+# is cut there (x#y is reached as x). The dashboard also puts names into URLs as typed, so a browser
+# cuts them at '#' or '?', turns '\' into '/' and resolves '.' and '..'. LiteLLM now refuses new
+# names like these (400); names stored before are listed here at every start, and while any holds
+# a '%', '#' or '?' the Ingress nginx refuses path-addressed writes carrying '%' (409, marker
+# below). Rename them through port 4000 to lift it. Model names with '/' are the normal provider
+# form (chatgpt/...) and are fine.
 # Always exits 0: a failed oneshot would stop the container (S6_BEHAVIOUR_IF_STAGE2_FAILS=2).
 export WOOW_STEP=woow-name-scan
 . /usr/local/lib/woow-litellm/common.sh
@@ -13,28 +16,32 @@ cd /
 MARKER=/run/woow/ingress-percent-guard
 # One line per name, non-printable characters replaced, at most 80 characters (names are labels).
 shown() { tr -c '[:print:]\n' '?' | cut -c1-80 | sed 's/^/    /'; }
+# SQL conditions on a name column: not addressable as a path segment (chr(92) is '\'), and
+# reaching another resource when sent percent-encoded through the Ingress.
+unaddressable() { echo "($1 ~ '[%/#?]' OR strpos($1, chr(92)) > 0 OR $1 IN ('.', '..'))"; }
+redirected() { echo "$1 ~ '[%#?]'"; }
 
-creds="$(psql_su -d litellm -c "SELECT credential_name FROM \"LiteLLM_CredentialsTable\" WHERE strpos(credential_name, '%') > 0 OR strpos(credential_name, '/') > 0 ORDER BY 1" 2>/dev/null)" || {
+creds="$(psql_su -d litellm -c "SELECT credential_name FROM \"LiteLLM_CredentialsTable\" WHERE $(unaddressable credential_name) ORDER BY 1" 2>/dev/null)" || {
   log "WARNING could not read the credential names; the Ingress write guard stays as it was"
   exit 0
 }
-models="$(psql_su -d litellm -c "SELECT model_id || '  (model_name: ' || model_name || ')' FROM \"LiteLLM_ProxyModelTable\" WHERE strpos(model_id, '%') > 0 OR strpos(model_id, '/') > 0 OR strpos(model_name, '%') > 0 ORDER BY 1" 2>/dev/null)" || {
+models="$(psql_su -d litellm -c "SELECT model_id || '  (model_name: ' || model_name || ')' FROM \"LiteLLM_ProxyModelTable\" WHERE $(unaddressable model_id) OR strpos(model_name, '%') > 0 ORDER BY 1" 2>/dev/null)" || {
   log "WARNING could not read the model ids; the Ingress write guard stays as it was"
   exit 0
 }
-percent="$(psql_su -d litellm -c "SELECT (SELECT count(*) FROM \"LiteLLM_CredentialsTable\" WHERE strpos(credential_name, '%') > 0) + (SELECT count(*) FROM \"LiteLLM_ProxyModelTable\" WHERE strpos(model_id, '%') > 0)" 2>/dev/null)" || percent=1
+percent="$(psql_su -d litellm -c "SELECT (SELECT count(*) FROM \"LiteLLM_CredentialsTable\" WHERE $(redirected credential_name)) + (SELECT count(*) FROM \"LiteLLM_ProxyModelTable\" WHERE $(redirected model_id))" 2>/dev/null)" || percent=1
 
 if [ -n "$creds" ]; then
-  log "WARNING credential names with '%' or '/' (the HA sidebar may address another credential; manage them on port 4000):"
+  log "WARNING credential names with '%', '/', '#', '?' or '\\', or named '.' or '..' (the HA sidebar may address another credential or none; manage them on port 4000):"
   printf '%s\n' "$creds" | shown >&2
 fi
 if [ -n "$models" ]; then
-  log "WARNING model ids with '%' or '/', or model names with '%' (manage them on port 4000):"
+  log "WARNING model ids with '%', '/', '#', '?' or '\\', or named '.' or '..', or model names with '%' (manage them on port 4000):"
   printf '%s\n' "$models" | shown >&2
 fi
 if [ "$percent" != "0" ]; then
   : > "$MARKER" && chmod 0644 "$MARKER"
-  log "sidebar (Ingress) DELETE/PATCH/PUT with '%' in the path are refused (409) until no name holds '%'"
+  log "sidebar (Ingress) DELETE/PATCH/PUT with '%' in the path are refused (409) until no name holds '%', '#' or '?'"
 else
   rm -f "$MARKER"
   if [ -z "$creds" ] && [ -z "$models" ]; then
