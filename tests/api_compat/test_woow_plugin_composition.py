@@ -278,6 +278,8 @@ class ChatGPTUpstream:
             for name in names:
                 monkeypatch.setattr(cls, name, getattr(cls, name))
             monkeypatch.setattr(cls, '_woow_patched', False, raising=False)
+        # 0.3.16: the plugin's import hook also wraps litellm.main.responses_api_bridge_check; restored after the test.
+        monkeypatch.setattr(litellm.main, 'responses_api_bridge_check', litellm.main.responses_api_bridge_check)
         core._patch_chat(types.SimpleNamespace(ChatGPTConfig=ChatGPTConfig))
         core._patch_responses(types.SimpleNamespace(ChatGPTResponsesAPIConfig=ChatGPTResponsesAPIConfig))
         monkeypatch.setattr(litellm, 'credential_list', [])
