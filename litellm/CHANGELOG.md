@@ -15,6 +15,7 @@ Woow 外掛同步到 PaaS chart 0.3.14（woow-paas-charts `d3cd689`，逐位元�
 - 上游錯誤的重試資訊：上游回 408／409／429／5xx 時，把上游的 `Retry-After`、`retry-after-ms`、`x-should-retry`（只轉有效值，閘道自己設的不覆蓋）以標準名稱轉給呼叫端，OpenAI／Anthropic SDK 就能照上游的等待時間重試；上游逾時改回 **504**（`error.type: timeout`），不再是看起來像「呼叫端太慢」的 408。
 - 有預算上限的金鑰使用**沒有單價的模型**時，回應帶 `x-woow-warning: model_unpriced_budget_not_enforced`（預設照常放行，每個模型群組第一次記一筆警告）；沒有預算的呼叫者不受影響。與 0.1.9 的 `WOOW_BUDGET_UNPRICED=block_budgeted_keys` 並存，後者設了仍先拒絕。
 - 請求本體上限 64 MB（與側邊欄 Ingress 的 `client_max_body_size 64m` 相同），超過回 413 `request_too_large`，在 LiteLLM 讀取並解析本體之前就擋下。原本 4000 埠沒有上限（LiteLLM 會先讀完整個本體才驗證金鑰，一個 101 MB 的本體約吃 600 MB 記憶體）。
+- 設了 `max_parallel_requests` 的金鑰，串流請求結束後會還回並行名額（M4 API-09，與 PaaS 同一份建置補丁 `apply_stream_slot_release.py`）。LiteLLM 1.104.0 在設了 SSE keepalive 時（`litellm_settings.sse_keepalive_ping_interval_seconds`，或某個模型群組的所有部署都設了 `keepalive_seconds`），會把請求交給另一個 task 處理，名額也記在那個 task 裡；串流結束或斷線時都找不到，名額要等 1 小時才過期，這段時間同一把金鑰一直收到 429。修正後，串流讀完、客戶端中途斷線，或第一個 token 前只收到 `: ping` 就離開，名額都會在 2 秒內釋放；最後這種情況也會照 LiteLLM 處理斷線的方式結算預算預留。串流還開著時照樣佔用名額，限制沒有放寬。add-on 產生的設定沒有 keepalive，所以預設不受影響，這次是預先修補，以防管理員自行在後台開啟。
 - 後台 session cookie 的 HttpOnly 加固（外掛 `woow_ui_cookie_hardening`）隨檔案帶入，但**預設關閉**（`WOOW_UI_TOKEN_HTTPONLY=false`）：它強制 `Secure`，用 HTTP 開 HA（區網 `http://…:8123`）或直連 4000 埠時瀏覽器會丟掉 cookie，後台會登入不了。全程 HTTPS（例如只經 Cloudflare Tunnel）時可自行設 `true`。
 
 ### 新增
