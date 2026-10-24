@@ -33,6 +33,10 @@ Roles:
      their account is signed in; a 429 usage_limit_reached (weekly quota used up) without a
      Retry-After gets one (woow_usage_limit, chart 0.3.14) so the router keeps that account out
      of the rotation for minutes instead of 5 s;
+   * ``litellm.main.responses_api_bridge_check``: every chat completion of provider chatgpt goes
+     through the Responses API bridge (the only API the ChatGPT backend serves, and the path
+     that resolves the account reference), also when the model map does not say
+     ``mode: responses`` (chart 0.3.16);
    and puts the /woow/chatgpt page (woow_chatgpt_plugin.py) on the proxy app.
 2. ``remote_models`` / ``register_model_costs``: an account's model list straight from ChatGPT,
    and LiteLLM taught the ones its bundled model map does not know yet.
@@ -80,6 +84,7 @@ ACCOUNTS_DIR = os.path.join(TOKEN_DIR, "accounts")
 PATCH_TARGET = "litellm.llms.chatgpt.authenticator"
 CHAT_TARGET = "litellm.llms.chatgpt.chat.transformation"
 RESPONSES_TARGET = "litellm.llms.chatgpt.responses.transformation"
+BRIDGE_TARGET = "litellm.main"
 PROXY_UTILS_TARGET = "litellm.proxy.utils"
 REQUEST_PROCESSING_TARGET = "litellm.proxy.common_request_processing"
 PROXY_TARGET = "litellm.proxy.proxy_server"
@@ -825,6 +830,30 @@ def _patch_chat(module) -> None:
     cls._woow_patched = True
 
 
+def _patch_responses_bridge(module) -> None:
+    """chatgpt is one of LiteLLM's openai-compatible providers: a chat completion whose model
+    the model map does not mark ``mode: responses`` goes out through the OpenAI SDK, which never
+    calls ``validate_environment`` — the bearer is the unresolved reference
+    "woow-chatgpt:<account>" and the backend (Responses API only) refuses it. Models added
+    from the sign-in page are registered as responses models (``register_model_costs``); one
+    added by hand, on an instance with no signed-in account to load the model list from, was
+    not (M4 PLG-13 control on HA 0.1.14, 2026-10-24). Every caller looks the function up on
+    ``litellm.main`` at call time, so replacing the module attribute covers them all."""
+    original = getattr(module, "responses_api_bridge_check", None)
+    if original is None or getattr(original, "_woow_chatgpt", False):
+        return
+
+    def responses_api_bridge_check(model, custom_llm_provider, *args, **kwargs):
+        model_info, model = original(model, custom_llm_provider, *args, **kwargs)
+        if custom_llm_provider == "chatgpt" and (model_info or {}).get("mode") != "responses":
+            model_info = {**(model_info or {}), "mode": "responses"}
+        return model_info, model
+
+    responses_api_bridge_check._woow_chatgpt = True
+    responses_api_bridge_check.__wrapped__ = original
+    module.responses_api_bridge_check = responses_api_bridge_check
+
+
 def _patch_responses(module) -> None:
     cls = module.ChatGPTResponsesAPIConfig
     if getattr(cls, "_woow_patched", False):
@@ -988,6 +1017,7 @@ _HOOKS = {
     PATCH_TARGET: _patch_authenticator,
     CHAT_TARGET: _patch_chat,
     RESPONSES_TARGET: _patch_responses,
+    BRIDGE_TARGET: _patch_responses_bridge,
     PROXY_UTILS_TARGET: _patch_proxy_logging,
     REQUEST_PROCESSING_TARGET: _patch_request_processing,
     PROXY_TARGET: _install_plugin_routes,
