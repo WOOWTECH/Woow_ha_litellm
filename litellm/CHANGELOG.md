@@ -8,7 +8,7 @@ Woow 外掛同步到 woow-paas-charts 0.3.16 `b3e8371`（woow release train 清�
 
 ### 修正（外掛，與 Woow PaaS chart 0.3.16 同一份檔案）
 
-- 手動加入、沒有標成 responses 模式的 `chatgpt/` 模型，聊天與 completions 請求也一律走 Responses 橋接並解析綁定的帳號；帳號未連線時在送出前就回 401，不會再直接連到 chatgpt.com（M4 PLG-13 後續；ws97 0.1.14 驗收時的對照組發現）。
+- 手動加入、沒有標成 responses 模式的 `chatgpt/` 模型，聊天與 completions 請求也一律走 Responses 橋接並解析綁定的帳號；帳號未連線時在送出前就回 401，不會再直接連到 chatgpt.com（M4 PLG-13 後續；上一版在 ws97 驗收時的對照組發現）。
 - ChatGPT 訂閱頁第一次讀取帳號時遇到閘道錯誤（502／503／504／524）或斷線，會保留金鑰、顯示說明並在 15 秒後自動重試，不再誤顯示「尚未登入」並丟掉金鑰（M4 CPL-12.S03）。
 
 ### 測試
