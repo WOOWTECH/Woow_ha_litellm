@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.13
+
+2026-10-24
+
+接在上一版（release train 同步外掛到 woow-paas-charts 0.3.14 `d3cd689`）之後：外掛檔不變，這一版補上 M4 API-09 的建置補丁，以及 HA 自己的外掛設定、退回開關與說明文字。
+
+### 修正
+
+- 設了 `max_parallel_requests` 的金鑰，串流請求結束後會還回並行名額（M4 API-09，與 PaaS 同一份建置補丁 `apply_stream_slot_release.py`）。LiteLLM 1.104.0 在設了 SSE keepalive 時（`litellm_settings.sse_keepalive_ping_interval_seconds`，或某個模型群組的所有部署都設了 `keepalive_seconds`），會把請求交給另一個 task 處理，名額也記在那個 task 裡；串流結束或斷線時都找不到，名額要等 1 小時才過期，這段時間同一把金鑰一直收到 429。修正後，串流讀完、客戶端中途斷線，或第一個 token 前只收到 `: ping` 就離開，名額都會在 2 秒內釋放；最後這種情況也會照 LiteLLM 處理斷線的方式結算預算預留。串流還開著時照樣佔用名額，限制沒有放寬。add-on 產生的設定沒有 keepalive，所以預設不受影響，這次是預先修補，以防管理員自行在後台開啟。
+- 請求本體上限 64 MB（與側邊欄 Ingress 的 `client_max_body_size 64m` 相同），超過回 413 `request_too_large`，在 LiteLLM 讀取並解析本體之前就擋下。上一版沒有設定這個值，4000 埠沒有上限（LiteLLM 會先讀完整個本體才驗證金鑰，一個 101 MB 的本體約吃 600 MB 記憶體）。
+- add-on 說明文件與設定說明（`DOCS.md`、`translations`）改成與外掛頁面一致：同一個 ChatGPT 帳號**可以同時登入多個 LiteLLM**（2026-10-23 實測 HA add-on 與 PaaS 共存，兩邊各自換發 token 後仍可用），取代舊的「建議只連一個地方」。每個 LiteLLM 必須各自完成登入，不要複製或共用登入檔（refresh token 會輪替且只能用一次）；同一台內不要用兩個憑證連同一個帳號；訂閱額度由所有使用該帳號的地方共用。**不可把備份或 dump 還原到第二台並同時使用**這一點不變。
+
+### 新增
+
+- 退回開關（附加元件設定的 `env_vars`，不需重建映像；值會檢查）：`WOOW_REASONING_MIN_OUTPUT_MODE`（`raise`／`reject`／`off`）、`WOOW_REASONING_MIN_OUTPUT_TOKENS`（整數，0＝關閉）、`WOOW_UNPRICED_MODEL_MODE`（`warn`／`reject`／`off`）、`WOOW_FORWARD_RETRY_AFTER`（`true`／`false`）、`WOOW_UPSTREAM_TIMEOUT_STATUS`（`504`／`408`）、`WOOW_MAX_REQUEST_SIZE_MB`（MB，可含小數，0＝不限制）、`WOOW_UI_TOKEN_HTTPONLY`（`true`／`false`）、`WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS`（秒數，0 到 86400，0＝關閉；預設 900）。預設值明寫在 add-on 啟動環境（推理下限 raise／512、未定價 warn、轉送重試資訊、逾時 504、本體上限 64、後台 cookie 加固關閉、週額度冷卻 900），與 PaaS chart 的預設相同（除了本體上限 64 與 cookie 加固關閉兩項 HA 的決定），之後外掛預設值變動不會悄悄改變 add-on。這些行為與 ChatGPT 訂閱一樣由外掛載入，關掉 `chatgpt_subscription` 時一併不載入。
+- ChatGPT 週額度冷卻的上限可調：`WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS`（上一版起由外掛自動補 `Retry-After`，預設 900 秒），0 回到 LiteLLM 預設的 5 秒冷卻。冷卻存在記憶體，重新啟動 add-on 會清掉；同一個模型群組只有一個帳號時，LiteLLM 本來就不冷卻。
+
 ## 0.1.12
 
 2026-10-24

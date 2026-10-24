@@ -37,8 +37,10 @@ configuration:
     name: ChatGPT 訂閱
     description: >-
       讓 LiteLLM 用 ChatGPT Plus／Pro 訂閱的額度（與 Woow PaaS 相同的功能）。關掉後不會刪除已連線的帳號；
-      要刪請先在 ChatGPT 訂閱頁中斷連線。一個帳號建議只連一處（PaaS 或這裡擇一）；各自登入能否長期並存
-      尚未確認。不可把備份複製到另一台繼續用，因為會共用輪替的登入權杖。
+      要刪請先在 ChatGPT 訂閱頁中斷連線。同一個帳號可以同時登入多個 LiteLLM（含 PaaS），但每個 LiteLLM
+      必須各自登入，不要複製登入檔。不可把備份或 dump 還原到另一台並同時使用，因為會共用輪替的登入權杖。
+      帳號的週額度用完（429 usage_limit_reached）時會冷卻最長 15 分鐘，可用 env_vars 的
+      WOOW_USAGE_LIMIT_COOLDOWN_MAX_SECONDS 調整（0＝關閉）。
   api_docs:
     name: API 文件頁
     description: >-

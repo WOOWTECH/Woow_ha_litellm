@@ -117,8 +117,11 @@ RUN python -I /usr/share/woow-litellm/patches/apply_upstream_guard.py
 # M4 batch 1: one client error mask (R03/R15), viewer inference 403 (R04), Responses stream model
 # group (R11), no new '%' or '/' names (R01); last, after the upstream guard it builds on.
 RUN python -I /usr/share/woow-litellm/patches/apply_m4_batch1.py
+# M4 API-09: a streamed request gives its max_parallel_requests slot back when an SSE keepalive
+# interval is set; last, after the batch 1 output it builds on.
+RUN python -I /usr/share/woow-litellm/patches/apply_stream_slot_release.py
 
-ARG BUILD_VERSION=0.1.12
+ARG BUILD_VERSION=0.1.13
 ARG BUILD_REF=unknown
 ARG BUILD_ARCH=amd64
 # CI supplies the actual UTC build time; do not inherit the base image creation date.

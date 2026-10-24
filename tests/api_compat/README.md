@@ -148,6 +148,32 @@ the upstream guard); the other eight are pristine 1.104.0 files. It adds
 `litellm_core_utils/woow_client_guard.py`; the image harness verifies the final hashes through
 `final_api_patches(api, routes, errors, guard, batch1)`.
 
+## Stream slot release contracts (`apply_stream_slot_release.py`)
+
+`test_stream_slots.py` runs the real ASGI app with the v3 parallel request limiter registered the
+way proxy startup does it and a virtual key with `max_parallel_requests=1`. Requests are driven at
+the ASGI interface the way uvicorn serves them (the client vanishing turns into `http.disconnect`),
+each in a task of its own. The provider at the httpx transport answers at once (`quick`), stops
+after its first event (`hold`, `holdlate`), withholds its first token longer than the keepalive
+interval (`slow`, `slowhold`) or until the client is gone (`silent`). A second request with the same
+key tells whether the slot is free (200) or still taken (429). With
+`sse_keepalive_ping_interval_seconds` set it covers API-09:
+
+- chat, Responses and `/v1/messages` streams read to the end, or left after their first event, free
+  the slot within 2 s, also when the keepalive opened the response with `: ping`;
+- a client that leaves after only a `: ping` (the request is cancelled while the provider call is
+  pending, which no logging callback sees) frees it too, and the provider call is abandoned.
+
+Guards: an open stream keeps its slot (three probes get 429), and without a keepalive interval, as
+well as for non-streaming requests, the slot is held and released as before.
+
+The patch runs last (after `apply_m4_batch1.py`) on both chains. Its one target,
+`proxy/common_request_processing.py`, starts from the batch 1 output; first it checks the files its
+helper calls into (the limiter and the budget reservation as the upstream guard leaves them, and
+pristine `proxy/utils.py`). It adds `proxy/woow_stream_slots.py`; the image harness verifies the
+final hashes, the pristine dependency included, through
+`final_api_patches(api, routes, errors, guard, batch1, stream)`.
+
 ## Build integration
 
 The candidate Dockerfile invokes the new `apply_api_compat.py` after the existing
