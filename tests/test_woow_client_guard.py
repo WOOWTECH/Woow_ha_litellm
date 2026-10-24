@@ -197,9 +197,15 @@ def test_responses_events_are_restamped_on_a_copy():
 # R01 ------------------------------------------------------------------------------------------
 @pytest.mark.parametrize('value,chars,existing,expected', [
     ('x%2Fy', guard.PATH_UNSAFE, None, True), ('x/y', guard.PATH_UNSAFE, None, True),
+    # PLG-26: a browser cuts an unencoded URL at '#' or '?', turns '\' into '/', resolves '.' and '..'
+    ('x#y', guard.PATH_UNSAFE, None, True), ('x?y', guard.PATH_UNSAFE, None, True),
+    ('a\\b', guard.PATH_UNSAFE, None, True), ('.', guard.PATH_UNSAFE, None, True), ('..', guard.PATH_UNSAFE, None, True),
     ('100%', guard.NAME_UNSAFE, None, True), ('chatgpt/gpt-5.5', guard.NAME_UNSAFE, None, False),
+    ('x#y', guard.NAME_UNSAFE, None, False), ('..', guard.NAME_UNSAFE, None, False),  # model names are never paths
     ('我的 OpenAI 金鑰', guard.PATH_UNSAFE, None, False), ('x y', guard.PATH_UNSAFE, None, False),
+    ('v1.2...', guard.PATH_UNSAFE, None, False), ('.env', guard.PATH_UNSAFE, None, False),
     ('x%2Fy', guard.PATH_UNSAFE, 'x%2Fy', False),  # keeping a stored name is never refused
+    ('x#y', guard.PATH_UNSAFE, 'x#y', False), ('..', guard.PATH_UNSAFE, '..', False),
     (None, guard.PATH_UNSAFE, None, False),
 ])
 def test_unsafe_name_rule(value, chars, existing, expected):
@@ -208,4 +214,10 @@ def test_unsafe_name_rule(value, chars, existing, expected):
 
 def test_unsafe_name_message_names_the_allowed_characters():
     message = guard.unsafe_name_message('credential_name', 'a%b', guard.PATH_UNSAFE)
-    assert "'%' or '/'" in message and 'Home Assistant' in message and '中文' in message
+    assert "'%', '/', '#', '?' or '\\'" in message and "'.' or '..'" in message
+    assert 'Home Assistant' in message and '中文' in message and '「#」' in message
+
+
+def test_model_name_message_keeps_the_percent_only_rule():
+    message = guard.unsafe_name_message('model_name', 'r%x', guard.NAME_UNSAFE)
+    assert "must not contain '%'." in message and "'..'" not in message and 'Home Assistant sidebar' in message
