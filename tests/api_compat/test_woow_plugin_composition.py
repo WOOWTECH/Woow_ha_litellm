@@ -274,7 +274,7 @@ class ChatGPTUpstream:
             monkeypatch.setenv(name, value)
         # The provider seams exactly as the plugin's import hook installs them; restored after the test.
         for cls, names in ((ChatGPTConfig, ('_get_openai_compatible_provider_info', 'validate_environment', 'get_error_class')),
-                           (ChatGPTResponsesAPIConfig, ('validate_environment', 'get_error_class'))):
+                           (ChatGPTResponsesAPIConfig, ('validate_environment', 'get_error_class', 'transform_responses_api_request'))):
             for name in names:
                 monkeypatch.setattr(cls, name, getattr(cls, name))
             monkeypatch.setattr(cls, '_woow_patched', False, raising=False)

@@ -2,7 +2,29 @@
 
 ## 0.1.14
 
-- Woow 外掛同步到 woow-paas-charts b9f5ca8e37（woow release train 清冊）。合併前請改成實際變更說明。
+2026-10-24
+
+Woow 外掛同步到 woow-paas-charts 0.3.15 `b9f5ca8`（woow release train 清冊，機器人 PR），並帶入 HA 自己的 PLG-26 建置補丁（#29）。
+
+### 修正（外掛，與 Woow PaaS chart 0.3.15 同一份檔案）
+
+- 請求本體的 `extra_headers`／`headers` 帶 `ChatGPT-Account-Id` 或 `Authorization`（任何大小寫）時，不再讓綁定帳號的 token 配上別的帳號編號或被整個換掉：代理層直接回 400（param `extra_headers`／`headers`），provider 也會比對最終送出的標頭，不同就拒絕，fallback 一樣擋下（M4 PLG-13，R02）。這個 400 在 `/v1/completions` 也是 400（原本會變 500）。
+- 管理員登入後台不再顯示「Undefined Role」、側欄也恢復管理員選單：替身 JWT 改為複製真 JWT 的 claims，只換掉 key（0.1.11 cookie 加固的副作用）。
+- session key 已刪除、過期、封鎖，或只剩前端自存的替身 cookie 時，頁面會清掉兩個 cookie 回到登入頁；API 因此回 401 時自動重新載入一次（每分鐘最多一次）。含 session 資訊的頁面一律 `private, no-store`（M4 LPS-03.S04）。
+- ChatGPT 訂閱頁與後台對 504／524（逾時）、502／503／52x（連不上）與網路錯誤顯示看得懂的訊息，訂閱頁 15 秒後自動重讀狀態（M4 CPL-12.S03）。
+
+### 修正（HA 建置補丁，與 PaaS 同一份 `woow_client_guard.py`）
+
+- 憑證名稱與自訂模型 ID 新建或改名時，也不可含 `#`、`?`、`\`，也不可以只是 `.` 或 `..`（M4 PLG-26；上一版起已不可含 `%`、`/`）。原因：
+  - LiteLLM 後台把名稱原樣放進網址，瀏覽器會在 `#`、`?` 截斷網址，在側邊欄刪除「x#y」實際刪掉的是「x」。
+  - `\` 會被換成 `/`，這種名稱刪不掉。
+  - HA 的 Ingress 也會把 `%23`、`%3F` 再解碼成 `#`、`?`，所以正確編碼的 API 用戶端一樣會打到別的資源。
+
+  已存在的名稱照常可用。啟動時 `woow-name-scan` 會在 log 列出這些名稱；只要有名稱含 `%`、`#` 或 `?`，側邊欄中路徑含 `%` 的刪除或修改會回 409，請改用 4000 埠操作。含 `#`、`?` 的舊名稱不要在後台畫面刪改：瀏覽器送出前就截斷了網址，409 擋不到。
+
+### 文件
+
+- Ingress 單次請求上限更正為 64 MB（與 nginx 設定及 4000 埠一致；原本誤寫 16 MiB）。
 
 ## 0.1.13
 

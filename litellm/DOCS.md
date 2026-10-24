@@ -70,7 +70,7 @@ Woow LiteLLM 之後就無法更新或重新安裝，直到憑證修好為止。
 - 安全提醒：側邊欄與 HA 前端同源，HA 前端上的其他腳本（自訂卡片、其他 add-on 的頁面）理論上讀得到後台登入。
   請只安裝可信任的自訂元件與 add-on；需要長時間操作時改用區網或 Cloudflare Tunnel 開啟。
 
-- Ingress 單次請求上限為 **16 MiB**；含圖片或檔案的較大請求請改用受保護的 API 連線。
+- Ingress 單次請求上限為 **64 MB**（nginx `client_max_body_size 64m`，超過回 413；與下方 4000 埠的上限相同）；更大的請求請改用受保護的 API 連線。
 - 建議在應用程式資訊頁開啟 **Watchdog**。容器健康檢查會同時檢查 LiteLLM 與 nginx，並保留啟動寬限期。
 - 經 Cloudflare Tunnel 或 LAN userland-proxy 的使用者可能共用來源 IP，因此共用登入節流額度；
   重複輸入錯誤密碼可能暫時影響其他人的登入。請等待節流解除，不要停用登入節流。
