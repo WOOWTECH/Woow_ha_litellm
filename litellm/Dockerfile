@@ -120,6 +120,8 @@ RUN python -I /usr/share/woow-litellm/patches/apply_m4_batch1.py
 # M4 API-09: a streamed request gives its max_parallel_requests slot back when an SSE keepalive
 # interval is set; last, after the batch 1 output it builds on.
 RUN python -I /usr/share/woow-litellm/patches/apply_stream_slot_release.py
+# Preserve system input instructions on the ChatGPT Responses backend.
+RUN python -I /usr/share/woow-litellm/patches/apply_chatgpt_system_role.py
 
 ARG BUILD_VERSION=0.1.15
 ARG BUILD_REF=unknown

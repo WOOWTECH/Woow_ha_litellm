@@ -13,6 +13,7 @@ cp "$REPO/tests/api_contract_harness/"*.py "$REPO/tests/api_contract_harness/"*.
 cp "$REPO/litellm/patches/apply_api_compat.py" "$REPO/litellm/patches/apply_routes_auth.py" \
   "$REPO/litellm/patches/apply_api_errors.py" "$REPO/litellm/patches/apply_upstream_guard.py" \
   "$REPO/litellm/patches/apply_m4_batch1.py" "$REPO/litellm/patches/apply_stream_slot_release.py" \
+  "$REPO/litellm/patches/apply_chatgpt_system_role.py" \
   "$API_TMP/harness/"
 python3 -m venv "$API_TMP/downloader"
 "$API_TMP/downloader/bin/python" -m pip download --disable-pip-version-check \

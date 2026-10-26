@@ -215,11 +215,11 @@ def test_chain_order_gives_both_images_the_same_inputs():
 def test_dockerfile_runs_it_last_and_ci_gate_ships_it():
     docker = (REPO / 'litellm/Dockerfile').read_text()
     runs = [line for line in docker.splitlines() if line.startswith('RUN python -I /usr/share/woow-litellm/patches/')]
-    # The stream slot release (apply_stream_slot_release.py) builds on batch 1 and is the only installer after it.
-    assert runs[-1] == 'RUN python -I /usr/share/woow-litellm/patches/apply_stream_slot_release.py'
-    assert runs[-2] == 'RUN python -I /usr/share/woow-litellm/patches/apply_m4_batch1.py'
-    assert runs[-3] == 'RUN python -I /usr/share/woow-litellm/patches/apply_upstream_guard.py'
-    assert docker.index('COPY patches/ /usr/share/woow-litellm/patches/') < docker.index(runs[-2])
+    # The stream slot release (apply_stream_slot_release.py) builds on batch 1 and precedes the final ChatGPT role normalization.
+    assert runs[-2] == 'RUN python -I /usr/share/woow-litellm/patches/apply_stream_slot_release.py'
+    assert runs[-3] == 'RUN python -I /usr/share/woow-litellm/patches/apply_m4_batch1.py'
+    assert runs[-4] == 'RUN python -I /usr/share/woow-litellm/patches/apply_upstream_guard.py'
+    assert docker.index('COPY patches/ /usr/share/woow-litellm/patches/') < docker.index(runs[-3])
     assert 'litellm/patches/apply_m4_batch1.py' in (REPO / 'tools/ci-api-contracts.sh').read_text()
     assert "'apply_m4_batch1.py'" in (REPO / 'tests/api_contract_harness/run_image_contracts.py').read_text()
 
