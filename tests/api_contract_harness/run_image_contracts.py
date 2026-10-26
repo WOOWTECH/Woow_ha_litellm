@@ -35,7 +35,8 @@ def verify_patched_source(root, patches):
             raise RuntimeError('Built image API patch mismatch: ' + name)
 
 
-def final_api_patches(api_patch, routes_patch, errors_patch, guard_patch, batch1_patch=None, stream_patch=None):
+def final_api_patches(api_patch, routes_patch, errors_patch, guard_patch, batch1_patch=None, stream_patch=None,
+                      chatgpt_patch=None):
     patches = dict(api_patch.PATCHES)
     before, after, edits = patches[routes_patch.TARGET]
     if after != routes_patch.EXPECTED:
@@ -82,6 +83,13 @@ def final_api_patches(api_patch, routes_patch, errors_patch, guard_patch, batch1
         patches[name] = (patches[name][0] if name in patches else stream_before, stream_after, stream_edits)
     for name, (_, helper_hash) in stream_patch.HELPERS.items():
         patches[name] = (None, helper_hash, ())
+    if chatgpt_patch is not None:
+        # This provider is owned by the earlier SSE patch (outside the API map).
+        # The installer verifies its input; this gate verifies the installed output.
+        for name, (before, after, edits) in chatgpt_patch.PATCHES.items():
+            if name in patches and patches[name][1] != before:
+                raise RuntimeError('ChatGPT role patch must follow the exact provider output: ' + name)
+            patches[name] = (patches[name][0] if name in patches else before, after, edits)
     return patches
 
 
@@ -143,7 +151,11 @@ def main():
         stream_spec = importlib.util.spec_from_file_location('stream_patch', HERE / 'apply_stream_slot_release.py')
         stream_patch = importlib.util.module_from_spec(stream_spec)
         stream_spec.loader.exec_module(stream_patch)
-        final_patches = final_api_patches(patch, routes_patch, errors_patch, guard_patch, batch1_patch, stream_patch)
+        chatgpt_spec = importlib.util.spec_from_file_location('chatgpt_patch', HERE / 'apply_chatgpt_system_role.py')
+        chatgpt_patch = importlib.util.module_from_spec(chatgpt_spec)
+        chatgpt_spec.loader.exec_module(chatgpt_patch)
+        final_patches = final_api_patches(patch, routes_patch, errors_patch, guard_patch, batch1_patch,
+                                          stream_patch, chatgpt_patch)
         verify_patched_source(root, final_patches)
         print(json.dumps({'litellm_version': importlib.metadata.version('litellm'),
                           'source': str(root), 'verified_patch_files': len(final_patches),
